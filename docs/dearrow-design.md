@@ -165,10 +165,11 @@ Central helper to extend: `util/PicassoHelper.java`. Video-ID source at every si
 4. Settings: keys, `dearrow_settings.xml`, `DeArrowSettingsFragment`, registration, `main_settings` entry, defaults.
 5. Title hooks at all sites in §4 (recycled guard for holders; field-disposable for the rest).
 
-### Phase 5 — Thumbnails
-1. `DeArrowThumbnailUrl` + `PicassoHelper.loadDeArrowThumbnail`.
-2. Thumbnail replacement at the §4 sites, reusing the Phase-4 `boundVideoId` guard.
-3. Player thumbnail flows into notification/end-screen for free.
+### Phase 5 — Thumbnails + interactive toggle marker
+> **Expanded & redesigned (Session 7).** The authoritative Phase-5 design is **§8** — it
+> supersedes this stub and revises the §7 marker. Summary: thumbnails at lists + detail only
+> (player skipped), plus an always-present, tappable thumbnail-corner badge that toggles title +
+> thumbnail together. See §8 for the full spec.
 
 ---
 
@@ -208,3 +209,132 @@ Central helper to extend: `util/PicassoHelper.java`. Video-ID source at every si
 **Testing.** The mark *decision* is a pref read; the *rendering* is view glue (no Robolectric in this project) → verified by `assembleDebug` + on-device via the release/Obtainium path. Pure formatter/parser unit tests are unchanged (23/23).
 
 **Out of scope (YAGNI).** Tap-to-reveal-original; thumbnail marking (Phase 5); non-en translations (ship en-only, like the other DeArrow strings).
+
+> **Revised by §8 (Session 7).** Phase 5 makes the marker interactive, so "tap-to-reveal-original"
+> is now **in** scope (it's the toggle). The §7 inline title icon is retained but its role narrows
+> to a *static recognition cue*; the new interactive control is a separate thumbnail-corner badge.
+
+---
+
+## 8. Phase 5 — DeArrow thumbnails + interactive toggle marker
+
+> Status: **IMPLEMENTED** (Session 8, 2026-05-31) — client `patch` commits `a860ce2a4..754992090`
+> (3 logical commits, force-pushed). Designed + approved via brainstorm (Session 7); mockups approved.
+> Unit tests green (40/40 dearrow). The full `nix run .#build` APK gate was not re-run this session
+> (per-task `assembleDebug` all passed); on-device check still deferred to Phase 6/7.
+> **Supersedes** the §5 "Phase 5" stub and **revises** §7: the §7 inline title icon becomes a
+> *static recognition cue*, and a new *always-present, interactive thumbnail-corner badge* becomes
+> the toggle.
+
+### 8.1 Approved decisions
+- **Marker = hybrid.** Two distinct per-item signals on YouTube surfaces:
+  - **Title star** — the §7 `CenteredImageSpan` of `ic_stars`, tinted to the title's text colour.
+    *Static, recognition-only.* Shown **only while a DeArrow title is currently displayed**, so the
+    user can tell *before clicking* that the title they're reading is the crowdsourced one.
+    Governed by the existing `dearrow_mark_replaced_titles`.
+  - **Thumbnail corner badge** — a new overlay `ImageView` at the thumbnail's **top-left** corner
+    (the duration badge stays bottom-right, so no collision). *Always present* on every YouTube item
+    when DeArrow is on, and the **only tap target**. Three visual states:
+    - **Active** — has data, currently showing DeArrow (solid/tinted fill, filled star).
+    - **Off / hollow** — has data, tapped to show original (dark fill, outline star) ⇒ "tap to
+      restore DeArrow".
+    - **Faded** — video not in the DeArrow DB; **non-clickable**, so taps fall through to open the
+      video.
+- **Toggle = temporary.** Tapping the badge flips title + thumbnail **together** between DeArrow and
+  original; tap again restores. State is per-item and **resets on recycle** (lists) / lasts only for
+  the screen's lifetime (detail). No persistent or cross-surface store.
+- **"Has data" = title OR thumbnail.** The badge is *active* iff
+  `(titles enabled AND a replacement title exists) OR (thumbnails enabled AND a replacement
+  thumbnail exists)`; *faded* otherwise. A tap flips whichever replacements are effective.
+- **Thumbnail sites = lists + video detail only.** **Player thumbnail is SKIPPED** — it feeds the
+  MediaSession / notification / lockscreen / end-screen bitmap pipeline (`Player.initThumbnail` →
+  `currentThumbnail`), too costly for the benefit. The player *title* is already de-clickbaited
+  (Phase 4 Unit C), so the player still benefits.
+- **Random-frame fallback = kept** (DeArrow-extension parity): a video with only a *title*
+  submission still gets its thumbnail replaced with a `randomTime` frame.
+  **`dearrow_replace_thumbnails` defaults ON.**
+- **Settings = minimal:** exactly one new toggle (`dearrow_replace_thumbnails`); the badge has no
+  pref of its own (it follows the master + sub-toggles).
+
+### 8.2 Architecture — unified `DeArrowItemController`
+Evolve the committed `DeArrowTitleApplier` into **`DeArrowItemController`**: one instance per holder
+or non-recycled site. Chosen over two separate appliers (title + thumbnail) because the toggle must
+flip title **and** thumbnail together — a single object holding both originals, both DeArrow
+versions, the toggle state, and the view refs gives **one** branding fetch, **one** main-thread
+render, **one** `boundVideoId` stale-guard, and **one** place the toggle lives. That is the leanest
+and most optimized option: fewest allocations per visible row and no two-object recycle races.
+
+Fields: `boundVideoId`, `Disposable disposable`, `boolean showingOriginal`, and cached
+`originalTitle` / `originalThumbUrl` / `replacementTitle` / `replacementThumbUrl`. View refs:
+`titleView` (required); `thumbnailView` + `badgeView` (nullable). At title-only sites (player,
+dialog, queue) the latter two are null and the controller degrades to today's title-+-star behavior
+with no badge and no toggle.
+
+The heavy logic stays in small, pure, unit-tested units; the controller is a thin orchestrator
+(gate → fetch once → compute via selectors → render).
+
+### 8.3 New pure units (JUnit, zero Android deps)
+- **`DeArrowThumbnailSelector.select(branding)` → frame time, or a "none" signal.** Mirrors
+  `DeArrowTitleFormatter`: drop `original == true`; prefer `locked`; else the highest non-negative
+  `votes`; use that entry's `timestamp` when present; else fall back to `randomTime * videoDuration`
+  when both are available; else "none".
+- **`DeArrowThumbnailUrl.build(videoId, timeSeconds)` → URL string:**
+  `https://dearrow-thumb.ajay.app/api/v1/getThumbnail?videoID=<id>&time=<sec>`.
+
+### 8.4 Picasso — no-flicker swap
+`PicassoHelper.loadDeArrowThumbnail(url)`: reuse the existing scale-down transform, add `.noFade()`,
+and use **no placeholder and no error drawable**. On `204`/error Picasso leaves the view's current
+bitmap untouched, so the original (already loaded synchronously by the holder) stays — no flicker,
+no blanking. Toggling back to the original re-loads the original URL (Picasso disk-cached, cheap).
+
+### 8.5 Per-item flow
+`apply(serviceId, url, originalTitle, originalThumbUrl)`:
+1. Dispose any prior fetch; reset `showingOriginal = false`; clear cached replacements.
+2. Baseline title/thumbnail already set by the holder. Badge → **GONE** unless gated-in; if gated,
+   show it **faded** (pending result).
+3. Gate: `url != null` AND (titles-on OR thumbs-on) AND `serviceId == YouTube` AND the id parses
+   (`YoutubeStreamLinkHandlerFactory.getId`, multi-catch as today). On failure → badge GONE, return.
+4. `boundVideoId = id`; subscribe `DeArrowService.getBranding(id).observeOn(mainThread)`. In the
+   callback, **first** guard `id.equals(boundVideoId)` (drop stale recycled results), then:
+   - `replacementTitle` = titles-on ? `DeArrowTitleFormatter.selectTitle(...)` : null.
+   - `replacementThumbUrl` = thumbs-on ? (`DeArrowThumbnailSelector` → `DeArrowThumbnailUrl`) : null.
+   - `hasData = replacementTitle != null || replacementThumbUrl != null`.
+   - Badge → **active** + clickable if `hasData`; else stays **faded** + non-clickable.
+   - If `hasData`, render the DeArrow state (title + star if `replacementTitle`; thumbnail swap if
+     `replacementThumbUrl`).
+
+Tap handler (attached only when `hasData`): flip `showingOriginal`; re-render the title (± star),
+swap the thumbnail (DeArrow URL ↔ original URL, both via cached Picasso), and toggle the badge
+active ↔ hollow. The badge `ImageView` consumes its own click so the row's open-video tap is not
+triggered.
+
+`dispose()` (transient sites, e.g. the long-press dialog): dispose the fetch, null `boundVideoId`.
+
+### 8.6 Layout changes
+Add a small overlay badge `ImageView` constrained to the thumbnail's **top-left** corner in: the
+base list item, the grid/card variant, the compact/mini item, and the video-detail layout. (Exact
+files + thumbnail view IDs + parent layout types are verified during planning.) The badge is
+**non-clickable until `hasData`**, so faded badges let touches fall through to the row.
+
+### 8.7 Settings
+- New key `dearrow_replace_thumbnails` (`settings_keys.xml`, `translatable="false"`).
+- `SwitchPreference` in `dearrow_settings.xml`, `android:dependency` on the master toggle,
+  `defaultValue="true"`; strings `_title` / `_summary`. **No `NewPipeSettings.java` change:** the
+  default comes from the XML `defaultValue` + the `getBoolean(key, true)` fallback in
+  `DeArrowSettings`, exactly like the existing four DeArrow toggles (none of which appear in
+  `NewPipeSettings`, which does not register `R.xml.dearrow_settings` for `setDefaultValues`).
+- `DeArrowSettings.isThumbnailReplacementEnabled(ctx)` → `isEnabled(ctx) && <pref>`.
+- The title star keeps `dearrow_mark_replaced_titles`. The badge has no pref: it shows iff
+  master-on AND (titles-on OR thumbs-on).
+
+### 8.8 Testing
+- New pure suites: `DeArrowThumbnailSelectorTest` (locked-wins, vote-sort, original-dropped,
+  explicit-timestamp, randomTime fallback, none-on-empty) and `DeArrowThumbnailUrlTest` (format,
+  precision, id passthrough).
+- `DeArrowTitleFormatterTest` (16) + `DeArrowResponseParserTest` (7) unchanged.
+- Controller / Picasso / layout = view glue (no Robolectric) → covered by `assembleDebug` compile
+  gate + on-device verification via the release/Obtainium path (same as Phase 4).
+
+### 8.9 Out of scope (YAGNI)
+Player thumbnail (and its notification/lockscreen/end-screen bitmap); persistent or cross-surface
+toggle state; a dedicated badge pref; non-en translations; local DB/history thumbnails.
