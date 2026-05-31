@@ -181,3 +181,30 @@ Central helper to extend: `util/PicassoHelper.java`. Video-ID source at every si
 - **API etiquette** — hashPrefix bucket mode, ~6 h TTL, identifying User-Agent.
 - **GPL-3.0 attribution** — settings credit/links entry is a release blocker (Phase 7).
 - **Immutable model** — never mutate `StreamInfoItem`/`StreamInfo`; replace only at the view layer; never clobber `VideoDetailFragment.title`.
+
+---
+
+## 7. Phase 4 addendum — "Mark replaced titles" indicator
+
+> Status: designed + approved (Session 6). There is **no** pre-existing "show original titles" setting in the app — the only `show_original_*` pref is `show_original_time_ago` (about *timestamps*), so the Phase-4 "respect existing behavior" sub-item is void. What remains is this opt-in indicator.
+
+**Goal.** When DeArrow replaces a title, prefix a small icon so the user knows the title is crowdsourced (DeArrow data can be wrong/vandalized; the browser extension shows an indicator too). Default ON, behind a toggle.
+
+**Setting** (mirrors the existing DeArrow toggles):
+- Key `dearrow_mark_replaced_titles` (`settings_keys.xml`, `translatable="false"`).
+- `SwitchPreference` in `dearrow_settings.xml`, `android:dependency="@string/dearrow_replace_titles_key"`, `defaultValue="true"`, after "Auto-format titles" — so it auto-disables when titles aren't being replaced.
+- Strings `dearrow_mark_replaced_titles_title` ("Mark replaced titles") / `_summary`.
+- `DeArrowSettings.isMarkReplacedTitlesEnabled(ctx)` → plain bool read, default `true` (consulted only once a replacement exists, like `isAutoFormatTitlesEnabled`).
+
+**Rendering — single chokepoint.** `DeArrowTitleApplier.apply()` is the one place every surface (recycled holders + detail/player/dialog/queue) sets a replaced title, so the marker lives there, in the existing `replacement != null` branch:
+- mark off → `setText(replacement)` (unchanged).
+- mark on → `setText(SpannableStringBuilder[ CenteredImageSpan(icon) + " " + replacement ])`.
+- Icon: `@drawable/ic_stars`, `.mutate()`, tinted to the title's current text color (`titleView.getCurrentTextColor()`) — guaranteed visible in every theme, unlike a theme accent which can collide with the background in dark mode — with bounds sized to the view's text size.
+- Purely visual: only TextViews are touched; the `VideoDetailFragment.title` field, notifications, and share text are unaffected.
+- Recycled-safe: holders set the plain original first (clearing any prior span); the `boundVideoId` stale-guard prevents cross-row leaks.
+
+**New class.** `util/dearrow/CenteredImageSpan` — a vertical-centering `ImageSpan` (since `DynamicDrawableSpan.ALIGN_CENTER` is API 29 > minSdk 21).
+
+**Testing.** The mark *decision* is a pref read; the *rendering* is view glue (no Robolectric in this project) → verified by `assembleDebug` + on-device via the release/Obtainium path. Pure formatter/parser unit tests are unchanged (23/23).
+
+**Out of scope (YAGNI).** Tap-to-reveal-original; thumbnail marking (Phase 5); non-en translations (ship en-only, like the other DeArrow strings).
