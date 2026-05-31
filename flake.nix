@@ -100,9 +100,13 @@
 
             # --- Build ---
             # Extra args (e.g. -PforkVersionName=... -PforkVersionCode=...) are forwarded via "$@".
+            # -PforkAbiFilter=universal builds one all-architecture APK (mirrors CI; far faster than
+            # the upstream 5-APK split). Override locally with: nix run .#build -- -PforkAbiFilter=arm64-v8a
+            # ("$@" comes last, and Gradle honours the last -P value for a given property).
             echo "[*] ${blurb}"
             ./gradlew ${gradleTask} \
               -DskipFormatKtlint \
+              -PforkAbiFilter=universal \
               -Pandroid.aapt2FromMavenOverride="${aapt2}" \
               --no-daemon --stacktrace "$@"
 
