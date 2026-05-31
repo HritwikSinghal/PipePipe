@@ -104,9 +104,13 @@
             # the upstream 5-APK split). Override locally with: nix run .#build -- -PforkAbiFilter=arm64-v8a
             # ("$@" comes last, and Gradle honours the last -P value for a given property).
             echo "[*] ${blurb}"
+            # -PforkMinify=false skips R8 on the release build (faster; the fork needs no
+            # shrink/obfuscate). No-op for .#debug (assembleDebug never minifies). Override with
+            # nix run .#build -- -PforkMinify=true to restore upstream's minified release.
             ./gradlew ${gradleTask} \
               -DskipFormatKtlint \
               -PforkAbiFilter=universal \
+              -PforkMinify=false \
               -Pandroid.aapt2FromMavenOverride="${aapt2}" \
               --no-daemon --stacktrace "$@"
 

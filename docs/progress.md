@@ -1,6 +1,6 @@
 # Project: PipePipe+ — DeArrow support & signed release fork
 
-> Last updated: 2026-06-01 | Session: 14
+> Last updated: 2026-06-01 | Session: 15
 
 ## Overview
 Maintain a personal fork of **PipePipe** (a NewPipe-based Android client) that adds **DeArrow** support — crowdsourced de-clickbait **titles + thumbnails** for YouTube — while tracking upstream `InfinityLoop1308/PipePipe`. The PipePipe repo is a thin meta-repo; real code lives in submodules (`PipePipeClient` = the app, `PipePipeExtractor` = the extractor lib). Strategy: **fork only what we modify** — only `PipePipeClient` is forked (to `HritwikSinghal/PipePipeClient`) and carries a `patch` branch; the extractor stays upstream-pinned/dormant. The meta-repo's `patch` branch repoints the client submodule at our fork and is the **default branch** on origin. End state: `git fetch upstream` + rebase keeps us current, `nix run .#build` produces a signed **PipePipe+** APK (distinct `applicationId`, installs alongside the official app), and a `workflow_dispatch` GitHub Actions release publishes a signed APK (keystore via GitHub Secrets) — mirroring `~/Projects/reddit/continuum`.
@@ -14,6 +14,54 @@ Maintain a personal fork of **PipePipe** (a NewPipe-based Android client) that a
 - **Build/release:** `nix run .#build` → signed PipePipe+ universal APK; `.#debug` for fast iteration; `workflow_dispatch` release pipeline live and previously verified on-device via Obtainium. Phases 1–7 done; **only Phase 8 (upstream-sync maintenance + docs) remains.**
 
 ## Next Session Pickup (START HERE)
+
+**Status (Session 15 — CI build-time investigation + R8-disable for the fork release; IMPLEMENTED + verified, UNCOMMITTED; resume here):**
+User asked why CI release builds still take ~4 min after the Session-14 single-APK change.
+**Investigated the actual `release.yml` run timings (`gh run view`):** the single-APK change only
+removed the cost of packaging+signing 4 extra APKs — never the bottleneck. The critical path is
+`build-release` (206s), of which **178s is `./gradlew :app:assembleRelease`** (compile→R8→dex→
+package→sign); checkout/JDK/cache are ~28s. `build-debug` runs in parallel and is *shorter* (158s),
+so it's off the critical path. **Root cause of the variance** (runs ranged 2m51s…6m36s): the Gradle
+**build cache keeps going cold** — proven from logs (fast run `14/45 from cache` → 2m56s build; slow
+run `0 from cache` → 5m21s build). `gh cache list` showed why: each run writes ~2 GB of caches
+(a ~470 MB `gradle-home` cache *per job*, release+debug, plus shared dep/wrapper caches) and ~2 GB
+is stale waste from `ci.yml`'s `setup-java cache:'gradle'` (a duplicate of release.yml's
+`setup-gradle`); against GitHub's 10 GB/repo cache limit this churns → LRU eviction → cold builds.
+Also: `setup-gradle`'s cache-*cleanup* step fails every run (`Gradle requires JVM 17`, job runs JDK
+11 — non-fatal, but saved caches never get pruned). **Presented 3 levers (cache-stabilization,
+drop build-debug, disable R8); user chose ONLY "disable R8 for the fork release."** **Implemented**
+(same rebase-safe additive pattern as `-PforkAbiFilter`): new `-PforkMinify` property — an
+end-of-file block in client `app/build.gradle` reconfigures `android.buildTypes.release.minifyEnabled`
+*after* the `android{}` block (never edits upstream's `buildTypes{}` DSL); **absent ⇒ upstream's
+minified release unchanged** (keeps a bare `assembleRelease` byte-for-byte upstream for F-Droid
+reproducibility), `-PforkMinify=false` skips R8. Wired `-PforkMinify=false` into `release.yml`
+(`build-release` step) + `flake.nix` (shared `mkGradleApp` call → effective for `.#build`, no-op for
+`.#debug`). **Verified:** `--dry-run` shows `:app:minifyReleaseWithR8` present with `=true`, gone with
+`=false`; full `assembleRelease -PforkAbiFilter=universal -PforkMinify=false` → BUILD SUCCESSFUL,
+config-cache 0 problems, one `PipePipe_5.1.1-universal-release.apk` (52 MB; larger = expected with no
+shrinking), no R8 task ran (stale `mapping/release/` confirms). Trade-off accepted: larger APK, no
+obfuscation (fine for an Obtainium-distributed personal fork). **REMAINING: commit** — push client
+`patch` (`app/build.gradle`) **BEFORE** the meta gitlink bump (standing gotcha), then meta `patch`
+(`release.yml` + `flake.nix` + `docs/progress.md` + gitlink bump); trigger a release run and confirm
+the on-CI build time drops + the (unminified) universal APK still installs/updates via Obtainium.
+**Cache-stabilization (cold-run fix) — IMPLEMENTED this session (code), cache purge PENDING user
+confirm:** to kill the cold-build variance (runs that spike to ~6 min from an evicted Gradle cache),
+reclaimed the repo's 10 GB Actions-cache budget. **(1) `ci.yml`:** swapped `setup-java@v4 cache:'gradle'`
+(a duplicate caching scheme that wrote ~2 GB/run the release pipeline on default-branch `patch` could
+never use, churning the budget + evicting the warm release caches) for `setup-java@v5` (no cache) +
+`gradle/actions/setup-gradle@v4` (unified with `release.yml`); since `setup-gradle` defaults to
+`cache-read-only` on non-default branches, CI on `main`/PRs now restores shared deps without writing
+~2 GB of pollution. Also bumped `checkout@v4→v6`, added `--build-cache` + `chmod +x gradlew`.
+**(2) `release.yml`:** added `cache-cleanup: never` to both `setup-gradle` steps — the cleanup
+provisions Gradle ≥ 8.11 (needs JVM 17) and fails every run under our JDK 11 (non-fatal, but noisy +
+never prunes). **Verified:** both workflow files pass `yaml.safe_load`; `gradle/actions/setup-gradle@v4`
+input names confirmed against the action's `action.yml` (`cache-cleanup ∈ {never,on-success,always}`,
+`cache-read-only` defaults true off the default branch). **PENDING (delete → needs user OK):** purge
+the ~2.0 GB orphaned `setup-java-*-gradle` caches + the ~0.89 GB superseded prev-commit (`3cc6dfbf`)
+`gradle-home` caches via `gh cache delete`, to immediately free budget (keeps the current-commit
+`9996efc` home caches + shared dep caches). **Honest scope note:** R8-disable shaves the warm-build
+floor (~45s) but NOT the variance; this cache work targets the variance. The remaining lever (declined)
+is **dropping `build-debug`**, which would halve per-run cache writes (2 jobs × ~470 MB → 1). --- _Prior:_
 
 **Status (Session 14 — build-time improvements IMPLEMENTED + verified + shipped; resume here):**
 Cut CI + local build cost via a **single universal APK** + Gradle parallel/cache tuning. Full detail

@@ -119,6 +119,11 @@ jobs:
       # re-compiling unchanged sources.
       - name: Set up Gradle cache
         uses: gradle/actions/setup-gradle@v4
+        with:
+          # cache-cleanup=never: the cleanup step provisions Gradle >= 8.11, which requires JVM 17,
+          # but this job runs JDK 11 -- so cleanup fails every run (non-fatal, but noisy and never
+          # actually prunes). 'never' makes the no-op explicit and keeps the logs clean.
+          cache-cleanup: never
 
       - name: Write signing config from secrets
         env:
@@ -154,6 +159,7 @@ jobs:
             -PforkVersionCode="${FORK_VCODE}" \
             -PforkVersionName="${FORK_VNAME}" \
             -PforkAbiFilter=universal \
+            -PforkMinify=false \
             --no-daemon --build-cache --stacktrace -DskipFormatKtlint
 
       - name: List built APKs
@@ -191,6 +197,11 @@ jobs:
 
       - name: Set up Gradle cache
         uses: gradle/actions/setup-gradle@v4
+        with:
+          # cache-cleanup=never: the cleanup step provisions Gradle >= 8.11, which requires JVM 17,
+          # but this job runs JDK 11 -- so cleanup fails every run (non-fatal, but noisy and never
+          # actually prunes). 'never' makes the no-op explicit and keeps the logs clean.
+          cache-cleanup: never
 
       - name: Build debug APKs (diagnostic, instrumented)
         env:
