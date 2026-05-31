@@ -1,3 +1,8 @@
 /.idea
 /web
 /nightly
+
+# Nix build artifacts
+/result
+/result-*
+/.direnv
