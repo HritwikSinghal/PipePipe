@@ -59,12 +59,13 @@
         in
         { inherit pkgs androidComposition jdk sdkRoot aapt2; };
 
-      mkBuildApp = system:
+      # Shared launcher: run a Gradle task in the PipePipeClient submodule under the Nix toolchain.
+      mkGradleApp = system: { name, gradleTask, outSubdir, blurb }:
         let
           inherit (mkToolchain system) pkgs jdk sdkRoot aapt2;
         in
         pkgs.writeShellApplication {
-          name = "pipepipe-plus-build";
+          inherit name;
           runtimeInputs = [ jdk pkgs.coreutils pkgs.gnugrep pkgs.findutils ];
           text = ''
             # The PipePipe meta-repo has no gradlew at its root — the app lives in the
@@ -73,7 +74,7 @@
             CLIENT_DIR="$META_ROOT/PipePipeClient"
             if [ ! -x "$CLIENT_DIR/gradlew" ]; then
               echo "error: $CLIENT_DIR/gradlew not found." >&2
-              echo "       Run 'nix run .#build' from the PipePipe meta-repo root with submodules" >&2
+              echo "       Run this from the PipePipe meta-repo root with submodules" >&2
               echo "       checked out (git submodule update --init PipePipeClient PipePipeExtractor)." >&2
               exit 1
             fi
@@ -98,25 +99,38 @@
             fi
 
             # --- Build ---
-            # Phase 1 baseline: debug build, mirroring upstream CI
-            #   (cd PipePipeClient && ./gradlew assembleDebug ... -DskipFormatKtlint).
-            # Debug APKs are auto-signed with the Android debug key, so this already
-            # "builds + signs + creates an APK" for local install/testing.
-            # TODO(Phase 6): switch to ':app:assembleRelease' + the release keystore
-            #   (signingConfigs.release via keystore.properties) and PipePipe+ identity.
-            # Extra args (e.g. -PforkVersionName=...) are forwarded via "$@".
-            echo "[*] Building debug APKs (first run fetches Gradle 7.5 + deps over the network)..."
-            ./gradlew :app:assembleDebug \
+            # Extra args (e.g. -PforkVersionName=... -PforkVersionCode=...) are forwarded via "$@".
+            echo "[*] ${blurb}"
+            ./gradlew ${gradleTask} \
               -DskipFormatKtlint \
               -Pandroid.aapt2FromMavenOverride="${aapt2}" \
               --no-daemon --stacktrace "$@"
 
-            out="app/build/outputs/apk/debug"
+            out="${outSubdir}"
             echo
             echo "[OK] Build complete. APKs in PipePipeClient/$out/:"
             find "$out" -maxdepth 1 -name '*.apk' -printf '   %f\n' | sort
           '';
         };
+
+      # Default `.#build` produces the SIGNED release (PipePipe+ identity), mirroring CI. It signs
+      # when PipePipeClient/keystore.properties is present (the maintainer's gitignored local copy;
+      # CI decodes it from the KEYSTORE_* secrets); without it, build.gradle emits an unsigned
+      # release. Pass -PforkVersionName=... -PforkVersionCode=... to stamp a fork version.
+      mkBuildApp = system: mkGradleApp system {
+        name = "pipepipe-plus-build";
+        gradleTask = ":app:assembleRelease";
+        outSubdir = "app/build/outputs/apk/release";
+        blurb = "Building SIGNED release APKs (first run fetches Gradle 7.5 + deps over the network)...";
+      };
+
+      # `.#debug` keeps the fast, debug-key-signed build for local iteration.
+      mkDebugApp = system: mkGradleApp system {
+        name = "pipepipe-plus-debug";
+        gradleTask = ":app:assembleDebug";
+        outSubdir = "app/build/outputs/apk/debug";
+        blurb = "Building debug APKs (debug-key signed, fast local iteration)...";
+      };
 
       mkDevShell = system:
         let
@@ -137,8 +151,10 @@
     in
     {
       apps = forAllSystems (system:
-        let build = { type = "app"; program = "${mkBuildApp system}/bin/pipepipe-plus-build"; };
-        in { inherit build; default = build; });
+        let
+          build = { type = "app"; program = "${mkBuildApp system}/bin/pipepipe-plus-build"; };
+          debug = { type = "app"; program = "${mkDebugApp system}/bin/pipepipe-plus-debug"; };
+        in { inherit build debug; default = build; });
 
       devShells = forAllSystems (system: { default = mkDevShell system; });
 
