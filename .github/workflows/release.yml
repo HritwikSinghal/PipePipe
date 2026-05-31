@@ -1,0 +1,130 @@
+# Manually-triggered build + GitHub Release for the PipePipe+ fork.
+#
+# - Runs only on demand (workflow_dispatch) and builds whatever branch/ref you pass (default: patch).
+# - Versions are derived automatically from upstream's own values in PipePipeClient/app/build.gradle:
+#     versionCode = <upstream versionCode> + run_number,
+#     versionName = <upstream versionName>-plus.<run_number>  (override via the version_name input).
+#   The fork never edits the version lines (they're injected at build time via -PforkVersion*), so
+#   rebases onto upstream never conflict on versioning and nothing is committed back to the branch.
+# - Signs with the fork release key, decoded at build time from GitHub Actions secrets
+#   (KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_PASSWORD) so the signature is stable across releases
+#   and the app updates in place. The keystore is never committed; secrets stay safe in a public
+#   repo because this workflow is workflow_dispatch-only.
+# - JDK 11 (Temurin): AGP 7.3.0 / Gradle 7.5 are incompatible with JDK 21, and the Temurin binary
+#   avoids the gcc-15-miscompiled source JDK that broke the local Nix build.
+name: Release APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch or ref to build from (the fork's changes live on patch)"
+        required: true
+        default: "patch"
+      version_name:
+        description: "Optional versionName override (blank = auto: <base>-plus.<run>)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write # required to create the GitHub Release + tag
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source branch (with submodules)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          submodules: recursive
+
+      - uses: gradle/actions/wrapper-validation@v4
+
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          java-version: 11
+          distribution: temurin
+          cache: gradle
+
+      - name: Compute version
+        id: ver
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+          VERSION_OVERRIDE: ${{ inputs.version_name }}
+          SOURCE_BRANCH: ${{ inputs.branch }}
+        run: |
+          set -euo pipefail
+          # Read upstream's own version straight from defaultConfig. The fork never overrides these
+          # lines in git, so a rebase onto upstream carries the version through automatically.
+          GRADLE_FILE=PipePipeClient/app/build.gradle
+          BASE_CODE=$(grep -E '^[[:space:]]*versionCode[[:space:]]+[0-9]+' "$GRADLE_FILE" | head -1 | grep -oE '[0-9]+')
+          BASE_NAME=$(grep -E '^[[:space:]]*versionName[[:space:]]+"' "$GRADLE_FILE" | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          VCODE=$((BASE_CODE + RUN_NUMBER))
+          if [ -n "${VERSION_OVERRIDE}" ]; then
+            VNAME="${VERSION_OVERRIDE}"
+          else
+            VNAME="${BASE_NAME}-plus.${RUN_NUMBER}"
+          fi
+          echo "vcode=${VCODE}" >> "$GITHUB_OUTPUT"
+          echo "vname=${VNAME}" >> "$GITHUB_OUTPUT"
+          echo "Building versionName=${VNAME} versionCode=${VCODE} from branch=${SOURCE_BRANCH}"
+
+      - name: Write signing config from secrets
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_BASE64}" ] || [ -z "${KEYSTORE_PASSWORD}" ] || [ -z "${KEY_PASSWORD}" ]; then
+            echo "::error::Missing signing secrets. Set KEYSTORE_BASE64, KEYSTORE_PASSWORD and KEY_PASSWORD in the repo's Actions secrets." >&2
+            exit 1
+          fi
+          # storeFile is resolved relative to the :app module, and keystore.properties relative to the
+          # client rootProject (PipePipeClient/), so decode/write into the submodule.
+          printf '%s' "${KEYSTORE_BASE64}" | base64 -d > PipePipeClient/app/fork-release.jks
+          cat > PipePipeClient/keystore.properties <<EOF
+          storeFile=fork-release.jks
+          storePassword=${KEYSTORE_PASSWORD}
+          keyAlias=fork
+          keyPassword=${KEY_PASSWORD}
+          EOF
+
+      - name: Build signed release APKs
+        env:
+          FORK_VCODE: ${{ steps.ver.outputs.vcode }}
+          FORK_VNAME: ${{ steps.ver.outputs.vname }}
+        run: |
+          cd PipePipeClient
+          chmod +x gradlew
+          # No -x lintVitalRelease: PipePipe sets lint.checkReleaseBuilds=false, so that task does
+          # not exist and excluding it would error.
+          ./gradlew :app:assembleRelease \
+            -PforkVersionCode="${FORK_VCODE}" \
+            -PforkVersionName="${FORK_VNAME}" \
+            --no-daemon --stacktrace -DskipFormatKtlint
+
+      - name: List built APKs
+        run: ls -la PipePipeClient/app/build/outputs/apk/release/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "plus-v${{ steps.ver.outputs.vname }}"
+          name: "PipePipe+ ${{ steps.ver.outputs.vname }}"
+          target_commitish: ${{ inputs.branch }}
+          body: |
+            Automated **PipePipe+** fork build (DeArrow titles + community thumbnails).
+
+            - Source branch: `${{ inputs.branch }}`
+            - versionName: `${{ steps.ver.outputs.vname }}`
+            - versionCode: `${{ steps.ver.outputs.vcode }}`
+            - applicationId: `InfinityLoop1309.NewPipeEnhanced.plus` (installs alongside the official app)
+
+            APKs are per-ABI (`arm64-v8a` for modern phones, `armeabi-v7a` for older 32-bit, plus
+            `x86`/`x86_64` and a `universal`). Signed with the fork release key (stable signature for
+            in-place updates).
+          files: PipePipeClient/app/build/outputs/apk/release/*.apk
+          fail_on_unmatched_files: true
