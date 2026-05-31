@@ -1,8 +1,9 @@
 # DeArrow performance & reliability investigation (Session 11 — 2026-05-31)
 
-> **Resume pointer.** Root cause is **found and evidence-backed**. The fix is **approved
-> (all 3 parts) but NOT yet implemented**. An instrumented debug build is already installed on the
-> test phone. Pick up at **"Approved fix"** below.
+> **Resume pointer.** Root cause found; the fix is **IMPLEMENTED and on-device VERIFIED
+> (Session 12, 2026-06-01)** — all 3 parts. See **"Verification (Session 12)"** below for the
+> before/after numbers. Remaining: commit (client `patch` BEFORE the meta gitlink bump) and decide
+> whether to keep the `DeArrowPerf` instrumentation long-term.
 
 ## TL;DR
 
@@ -94,7 +95,7 @@ service ends in `.onErrorComplete()`).
 
 RC1 and RC2 compound: more load → more 5xx → more poisoned buckets → more apparent "no data".
 
-## Approved fix (all 3 parts — APPROVED by user, NOT yet implemented)
+## Approved fix (all 3 parts — IMPLEMENTED Session 12, on-device verified)
 
 1. **Only cache 404 as "no data."** In `DeArrowService.fetchBucket`, treat **404** as the genuine
    negative (cache empty bucket). Treat **5xx / 429 / network / timeout** as **transient**: do NOT
@@ -119,6 +120,38 @@ Optional follow-ups (not in scope unless needed after re-measuring):
   — `prefetch()` (window cap) and `MAX_CONCURRENCY`.
 - `PipePipeClient/app/src/main/java/org/schabi/newpipe/util/dearrow/DeArrowItemController.java`
   — bind-time `getBranding` subscription (error handling; optional concurrency bound).
+
+## Verification (Session 12 — on-device, Pixel 10a, fix installed)
+
+Implemented all 3 parts on client `patch` (working tree, uncommitted), rebuilt the instrumented
+debug APK (`nix run .#debug`), reinstalled, and re-captured `DeArrowPerf` during the same usage flow
+(home feed scroll + several video opens). **All three parts confirmed working; both symptoms
+addressed.** Compile clean; dearrow unit suite **46/46** green (no regression).
+
+| Metric | Baseline (before) | After fix |
+|---|---|---|
+| Prefetch burst | 500 items @ concurrency 4 | **first 25 @ concurrency 2** (cap confirmed in logs) |
+| 5xx rate | ~28–32% | **~9.5%** (45 / 472) |
+| **Negative-cached buckets** | **44 — all 5xx-poisoned** | **0** (only 404s would cache; 0 occurred) |
+| Transient 5xx handling | poisoned 6h (false "no data") | **NOT cached**; retried — 44/45 recovered, 1 gave up (uncached) |
+| Branding fetch latency | median 7.8 s · 89% >3 s | **median 0.4 s · 20% >3 s** |
+| Per-row resolve latency | many 7–13 s | **median 35 ms** (655 warm-cache HITs) |
+
+- **Part 1 (404-only negative cache):** 0 negative-cached buckets vs 44; every 5xx now logs
+  `(transient, NOT cached)`. RC2 eliminated.
+- **Part 2 (prefetch window + concurrency):** every 500/58/59/30-item page now logs
+  `warming first 25 … concurrency=2`. The RC1 burst is gone.
+- **Part 3 (bounded retry w/ backoff):** 35× `retry 1/2 in 500ms`, 9× `retry 2/2 in 1000ms`,
+  1× `FAILED after retries` (a bucket that 503'd 3×, left uncached). Transient blips recover
+  instead of poisoning.
+
+**Remaining latency tail (honest).** p90 fetch ~8.5 s / max ~36 s persists because the DeArrow
+server itself is sometimes slow (observed a **15 s** wait just to *receive* a 503) and still 5xx's
+even at the reduced load — server-side, not self-inflicted. The warm-cache prefetch hides most of it
+(median resolve 35 ms). If the tail still bothers the user, the optional follow-ups apply: a
+**shorter per-request timeout** (fail fast on a stuck request → retry/give up sooner), a
+**persistent disk cache** (cold starts don't re-fetch), and **global backoff / honor `Retry-After`**
+when the recent 5xx rate is high.
 
 ## How to resume (commands)
 
