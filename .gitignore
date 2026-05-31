@@ -10,3 +10,4 @@
 # Superpowers brainstorm runtime scratch (HTML mockups + server pid/log) -- not project files.
 # The durable plan output under docs/superpowers/plans/ IS tracked.
 /.superpowers
+todo.md
