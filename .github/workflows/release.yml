@@ -22,9 +22,11 @@
 #   - build-*:       each builds its own variant and uploads the APKs as an artifact.
 #   - release:       downloads both artifacts, builds the commit changelog, publishes the Release.
 #
-# Speed levers: parallel variant builds, a shared persistent Gradle cache (gradle/actions/setup-gradle
-# restores the dependency + build cache across runs), `--build-cache`, and a lean changelog step that
-# reads submodule pointers from the tree (no submodule checkout in the release job).
+# Speed levers: a single universal APK per variant (-PforkAbiFilter=universal disables per-ABI
+# splitting, so we package + sign one all-architecture APK instead of five), parallel variant builds,
+# a shared persistent Gradle cache (gradle/actions/setup-gradle restores the dependency + build cache
+# across runs), `--build-cache`, and a lean changelog step that reads submodule pointers from the tree
+# (no submodule checkout in the release job).
 name: Release APK
 
 on:
@@ -151,6 +153,7 @@ jobs:
           ./gradlew :app:assembleRelease \
             -PforkVersionCode="${FORK_VCODE}" \
             -PforkVersionName="${FORK_VNAME}" \
+            -PforkAbiFilter=universal \
             --no-daemon --build-cache --stacktrace -DskipFormatKtlint
 
       - name: List built APKs
@@ -199,6 +202,7 @@ jobs:
           ./gradlew :app:assembleDebug \
             -PforkVersionCode="${FORK_VCODE}" \
             -PforkVersionName="${FORK_VNAME}" \
+            -PforkAbiFilter=universal \
             --no-daemon --build-cache --stacktrace -DskipFormatKtlint
 
       - name: List debug APKs
@@ -218,7 +222,11 @@ jobs:
   # client commit list comes from the GitHub compare API.
   # ---------------------------------------------------------------------------
   release:
-    needs: [build-release, build-debug]
+    # `prepare` MUST be listed here even though build-release/build-debug already depend on it:
+    # `needs.<job>.outputs` is only readable from a job's DIRECT needs (needs is NOT transitive).
+    # Omitting it makes needs.prepare.outputs.vname/vcode resolve to empty -> a release tagged
+    # `plus-v` with no version. (Regression from the parallelize refactor; fixed here.)
+    needs: [prepare, build-release, build-debug]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout (full history + tags, for the changelog)
@@ -308,12 +316,12 @@ jobs:
 
           ---
 
-          APKs are per-ABI (`arm64-v8a` for modern phones, `armeabi-v7a` for older 32-bit, plus
-          `x86`/`x86_64` and a `universal`). Signed with the fork release key (stable signature for
-          in-place updates).
+          A single **`universal`** APK with native libs for `arm64-v8a` (modern phones) and `x86_64`
+          (emulators) -- the only ABIs the bundled ffmpeg ships. Signed with the fork release key
+          (stable signature for in-place updates).
 
-          A **`*-debug.apk`** ("PipePipe Debug", id `...NewPipeEnhanced.debug`) is also attached: an
-          instrumented diagnostic build that logs DeArrow timing/cache details to logcat
+          A **`*-universal-debug.apk`** ("PipePipe Debug", id `...NewPipeEnhanced.debug`) is also
+          attached: an instrumented diagnostic build that logs DeArrow timing/cache details to logcat
           (tag `DeArrowPerf`) and shows Picasso source ribbons. It installs alongside PipePipe+ and
           is debug-key signed (not for daily use).
           EOF
