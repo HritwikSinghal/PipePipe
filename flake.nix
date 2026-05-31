@@ -44,7 +44,14 @@
           };
 
           # Build with JDK 11 to match upstream CI (Gradle 7.5 + AGP 7.3 do NOT support JDK 21).
-          jdk = pkgs.jdk11;
+          # Use the PREBUILT Temurin binary, NOT nixpkgs' source-built `jdk11`: on nixpkgs-unstable
+          # the latter is compiled by gcc 15, which miscompiles OpenJDK 11's HotSpot lock code and
+          # segfaults the Gradle daemon inside ObjectSynchronizer::inflate (null deref, si_addr=0x0)
+          # under concurrent monitor contention at build startup -- reproduced 3/3, independent of
+          # biased locking and JIT tier (it crashed from both the interpreter and C1). Temurin is
+          # vendor-built with an OpenJDK-11-era toolchain and builds cleanly (BUILD SUCCESSFUL,
+          # 5 APKs). See docs/progress.md (Session 6) for the full root-cause write-up.
+          jdk = pkgs.temurin-bin-11;
           sdkRoot = "${androidComposition.androidsdk}/libexec/android-sdk";
           # AGP otherwise downloads its own aapt2 from Maven (a prebuilt ELF that won't run on
           # NixOS). Point it at the autoPatchelf'd SDK binary instead.
