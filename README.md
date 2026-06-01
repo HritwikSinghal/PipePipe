@@ -65,6 +65,70 @@ This means that PipePipe neither receives updates from NewPipe nor pushes update
 
 Making a hard fork allows us to effectively address issues with quick fixes and maintain frequent feature updates.
 
+## PipePipe+ — changes from upstream
+
+**PipePipe+** is a personal, signed fork of PipePipe that adds **DeArrow** support and a reproducible
+Nix/CI **signed-release** pipeline. It installs **alongside** the official app (distinct application
+ID with a `.plus` suffix, app name "PipePipe+") and tracks upstream `InfinityLoop1308/PipePipe`,
+staying current by rebasing. Everything in this section is what differs from upstream; the rest of
+this README is upstream's.
+
+> Maintainers: keep this list in sync with `docs/progress.md` whenever fork behavior changes
+> (see `CLAUDE.md`).
+
+### DeArrow — crowdsourced de-clickbait titles & thumbnails (YouTube)
+- **Replacement titles** from the DeArrow community on every surface: feed/lists, video detail, the
+  player, the now-playing queue, and info dialogs. Optional auto-formatting of SHOUTING titles.
+- **Replacement thumbnails** on lists and video detail. The original is always kept until a DeArrow
+  frame actually loads, so a not-yet-generated frame never leaves a blank thumbnail.
+- **Interactive toggle badge** — a star on each thumbnail flips that row between the DeArrow and the
+  original title + thumbnail; replaced titles can also be marked with a small icon.
+- **Settings -> DeArrow**: enable DeArrow, replace titles, auto-format titles, mark replaced titles,
+  replace thumbnails, and "use random video frames" (random-frame fallback for videos with no
+  community submission; on by default), plus links to the DeArrow site & privacy policy.
+- **Persistent two-tier cache** (memory -> on-disk, survives restart) with stale-while-revalidate,
+  404-only negative caching, bounded transient retries, and ahead-of-bind prefetching.
+
+### Instant video detail page
+- Tapping a video from the feed, search, history, or a playlist renders the **thumbnail, title,
+  channel, duration, and view count immediately** from the item you tapped, instead of a blank page
+  for ~2 s while the full video info loads. The description, related videos, comments, and play
+  controls fill in as soon as the fetch returns.
+
+### Build, packaging & release
+- **Nix toolchain** for reproducible builds and a one-command signed release (see *Building &
+  installing* below): `nix run .#build` / `.#debug` / `.#install`.
+- **Installs alongside** the official app — distinct `applicationId` and **PipePipe+** app name.
+- **Signed GitHub Actions release** (`workflow_dispatch`, keystore via repo secrets) with parallel
+  debug+release builds and an auto-generated commit changelog.
+- **Single universal APK** (no per-ABI splits), **R8 disabled** on the fork release, and Gradle
+  build-cache stabilization for faster, more predictable CI.
+
+### Project layout
+- Fork-only submodules: the app (`PipePipeClient`) tracks this fork's `patch` branch; the extractor
+  stays pinned to upstream. Only what we change is forked.
+
+## Building & installing (PipePipe+ fork)
+
+This fork builds via a reproducible Nix flake (Android SDK 33 + JDK 11, pinned). Run the commands
+below from the meta-repo root with submodules checked out
+(`git submodule update --init PipePipeClient PipePipeExtractor`):
+
+| Command | What it does |
+| --- | --- |
+| `nix run .#build` | Build the **signed release** universal APK (PipePipe+ identity). Signs when `PipePipeClient/keystore.properties` is present; otherwise emits an unsigned release. |
+| `nix run .#debug` | Build a debug-key-signed APK for fast local iteration. |
+| `nix run .#install` | Install the already-built **release** APK onto a connected ADB device. |
+| `nix develop` | Drop into a dev shell with the toolchain on `PATH`. |
+
+APKs land in `PipePipeClient/app/build/outputs/apk/{release,debug}/`.
+
+**`nix run .#install`** does not build — run `.#build` first. It installs the newest APK in the
+release output dir via `adb install -r` (reinstall, keeps app data). With multiple devices
+connected, pick one with `ANDROID_SERIAL=<serial>` (`adb devices` lists them). Extra flags are
+forwarded to `adb install`, e.g. `nix run .#install -- -g` (grant runtime permissions) or
+`nix run .#install -- -d` (allow a version downgrade).
+
 ## About sign in
 
 PipePipe will ONLY use the login cookie for the specified scenarios you set. You can configure it in "Cookie Functions."
