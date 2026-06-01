@@ -85,7 +85,8 @@ this README is upstream's.
   original title + thumbnail; replaced titles can also be marked with a small icon.
 - **Settings -> DeArrow**: enable DeArrow, replace titles, auto-format titles, mark replaced titles,
   replace thumbnails, and "use random video frames" (random-frame fallback for videos with no
-  community submission; on by default), plus links to the DeArrow site & privacy policy.
+  community submission; off by default — a random frame is often less representative than the
+  channel's own thumbnail), plus links to the DeArrow site & privacy policy.
 - **Persistent two-tier cache** (memory -> on-disk, survives restart) with stale-while-revalidate,
   404-only negative caching, bounded transient retries, and ahead-of-bind prefetching.
 
