@@ -1,9 +1,9 @@
-# Manually-triggered build + GitHub Release for the PipePipe+ fork.
+# Manually-triggered build + GitHub Release for the PipePipeD fork.
 #
 # - Runs only on demand (workflow_dispatch) and builds whatever branch/ref you pass (default: patch).
 # - Versions are derived automatically from upstream's own values in PipePipeClient/app/build.gradle:
 #     versionCode = <upstream versionCode> + run_number,
-#     versionName = <upstream versionName>-plus.<run_number>  (override via the version_name input).
+#     versionName = <upstream versionName>-pipepiped.<run_number>  (override via the version_name input).
 #   The fork never edits the version lines (they're injected at build time via -PforkVersion*), so
 #   rebases onto upstream never conflict on versioning and nothing is committed back to the branch.
 # - Signs with the fork release key, decoded at build time from GitHub Actions secrets
@@ -37,7 +37,7 @@ on:
         required: true
         default: "patch"
       version_name:
-        description: "Optional versionName override (blank = auto: <base>-plus.<run>)"
+        description: "Optional versionName override (blank = auto: <base>-pipepiped.<run>)"
         required: false
         default: ""
 
@@ -89,14 +89,14 @@ jobs:
           if [ -n "${VERSION_OVERRIDE}" ]; then
             VNAME="${VERSION_OVERRIDE}"
           else
-            VNAME="${BASE_NAME}-plus.${RUN_NUMBER}"
+            VNAME="${BASE_NAME}-pipepiped.${RUN_NUMBER}"
           fi
           echo "vcode=${VCODE}" >> "$GITHUB_OUTPUT"
           echo "vname=${VNAME}" >> "$GITHUB_OUTPUT"
           echo "Building versionName=${VNAME} versionCode=${VCODE} from branch=${SOURCE_BRANCH}"
 
   # ---------------------------------------------------------------------------
-  # Signed PipePipe+ release APKs. Runs in parallel with build-debug.
+  # Signed PipePipeD release APKs. Runs in parallel with build-debug.
   # ---------------------------------------------------------------------------
   build-release:
     needs: prepare
@@ -174,9 +174,9 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
-  # Instrumented diagnostic "PipePipe Debug" APKs (applicationId
-  # InfinityLoop1309.NewPipeEnhanced.debug) -- installs alongside the release
-  # PipePipe+ and the official app. Logs DeArrow timing/cache via logcat.
+  # Instrumented diagnostic "PipePipeD Debug" APKs (applicationId
+  # wtf.pipepiped.debug) -- installs alongside the release
+  # PipePipeD and the official app. Logs DeArrow timing/cache via logcat.
   # Runs in parallel with build-release; needs no signing secrets.
   # ---------------------------------------------------------------------------
   build-debug:
@@ -236,7 +236,7 @@ jobs:
     # `prepare` MUST be listed here even though build-release/build-debug already depend on it:
     # `needs.<job>.outputs` is only readable from a job's DIRECT needs (needs is NOT transitive).
     # Omitting it makes needs.prepare.outputs.vname/vcode resolve to empty -> a release tagged
-    # `plus-v` with no version. (Regression from the parallelize refactor; fixed here.)
+    # `pipepiped-v` with no version. (Regression from the parallelize refactor; fixed here.)
     needs: [prepare, build-release, build-debug]
     runs-on: ubuntu-latest
     steps:
@@ -276,18 +276,18 @@ jobs:
             | sed -E 's#^https?://github.com/##; s#^git@github.com:##; s#\.git$##')
           [ -z "${CLIENT_SLUG}" ] && CLIENT_SLUG="${GH_OWNER}/PipePipeClient"
 
-          # Most recent EXISTING plus-v* tag (this run's tag isn't created until the release step),
+          # Most recent EXISTING pipepiped-v* tag (this run's tag isn't created until the release step),
           # i.e. the previous release.
-          PREV_TAG=$(git tag --list 'plus-v*' --sort=-creatordate | head -1 || true)
+          PREV_TAG=$(git tag --list 'pipepiped-v*' --sort=-creatordate | head -1 || true)
           COMMIT_URL="${GH_SERVER}/${GH_REPO}/commit"
 
           {
-            echo "Automated **PipePipe+** fork build (DeArrow titles + community thumbnails)."
+            echo "Automated **PipePipeD** fork build (DeArrow titles + community thumbnails)."
             echo
             echo "- Source branch: \`${SOURCE_BRANCH}\`"
             echo "- versionName: \`${VNAME}\`"
             echo "- versionCode: \`${VCODE}\`"
-            echo "- applicationId: \`InfinityLoop1309.NewPipeEnhanced.plus\` (installs alongside the official app)"
+            echo "- applicationId: \`wtf.pipepiped.release\` (installs alongside the official app)"
             echo
             echo "## Changelog"
             echo
@@ -331,9 +331,9 @@ jobs:
           (emulators) -- the only ABIs the bundled ffmpeg ships. Signed with the fork release key
           (stable signature for in-place updates).
 
-          A **`*-universal-debug.apk`** ("PipePipe Debug", id `...NewPipeEnhanced.debug`) is also
+          A **`*-universal-debug.apk`** ("PipePipeD Debug", id `wtf.pipepiped.debug`) is also
           attached: an instrumented diagnostic build that logs DeArrow timing/cache details to logcat
-          (tag `DeArrowPerf`) and shows Picasso source ribbons. It installs alongside PipePipe+ and
+          (tag `DeArrowPerf`) and shows Picasso source ribbons. It installs alongside PipePipeD and
           is debug-key signed (not for daily use).
           EOF
 
@@ -343,8 +343,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: "plus-v${{ needs.prepare.outputs.vname }}"
-          name: "PipePipe+ ${{ needs.prepare.outputs.vname }}"
+          tag_name: "pipepiped-v${{ needs.prepare.outputs.vname }}"
+          name: "PipePipeD ${{ needs.prepare.outputs.vname }}"
           target_commitish: ${{ inputs.branch }}
           body_path: RELEASE_BODY.md
           files: |

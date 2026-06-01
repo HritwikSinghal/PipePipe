@@ -34,8 +34,8 @@ Client (`PipePipeClient`, working tree on `patch` @ `3f39eb780`):
 
 Meta (`PipePipe`, working tree on `patch` @ `fe888fb`):
 - `.github/workflows/release.yml` — added an `assembleDebug` step that also publishes the
-  **"PipePipe Debug"** APK (`InfinityLoop1309.NewPipeEnhanced.debug`) to the release. *(Requested by
-  the user so the instrumented build can be installed via Obtainium; works alongside `.plus`.)*
+  **"PipePipeD Debug"** APK (`wtf.pipepiped.debug`) to the release. *(Requested by
+  the user so the instrumented build can be installed via Obtainium; works alongside the release build.)*
 
 > Decision still open: whether the bare `nix run` (currently `= .#build` = signed release) should
 > default to `.#debug`. For now use `nix run .#debug` for the instrumented build. The instrumentation
@@ -45,7 +45,7 @@ Meta (`PipePipe`, working tree on `patch` @ `fe888fb`):
 
 1. `nix run .#debug` → built 5 debug APKs (BUILD SUCCESSFUL ~30s incremental).
 2. `adb install -r .../apk/debug/PipePipe_5.1.1-arm64-v8a-debug.apk` onto a **Pixel 10a, Android 16,
-   arm64-v8a** (wireless adb `192.168.1.40`). Installs as **"PipePipe Debug"**, separate from `.plus`.
+   arm64-v8a** (wireless adb `192.168.1.40`). Installs as **"PipePipeD Debug"**, separate from the release build.
 3. `adb logcat -c` then `adb logcat -v time DeArrowPerf:V '*:S'` while the user used the app
    (opened videos, scrolled recommended lists + the home feed).
 
@@ -173,7 +173,7 @@ cd PipePipeClient && nix develop -c ./gradlew :app:testDebugUnitTest --tests 'or
 ```
 
 Test device: **Pixel 10a / Android 16 / arm64-v8a**, wireless adb (re-pair if the IP changed).
-Debug app package: `InfinityLoop1309.NewPipeEnhanced.debug` ("PipePipe Debug").
+Debug app package: `wtf.pipepiped.debug` ("PipePipeD Debug").
 
 ## Decisions / notes
 - The instrumentation (`DeArrowPerf` logs + Picasso ribbons) is intentionally **kept** in the working

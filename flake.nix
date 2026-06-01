@@ -1,5 +1,5 @@
 {
-  description = "PipePipe+ — reproducible toolchain to build (and, from Phase 6, sign) APKs";
+  description = "PipePipeD — reproducible toolchain to build (and, from Phase 6, sign) APKs";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -121,12 +121,12 @@
           '';
         };
 
-      # Default `.#build` produces the SIGNED release (PipePipe+ identity), mirroring CI. It signs
+      # Default `.#build` produces the SIGNED release (PipePipeD identity), mirroring CI. It signs
       # when PipePipeClient/keystore.properties is present (the maintainer's gitignored local copy;
       # CI decodes it from the KEYSTORE_* secrets); without it, build.gradle emits an unsigned
       # release. Pass -PforkVersionName=... -PforkVersionCode=... to stamp a fork version.
       mkBuildApp = system: mkGradleApp system {
-        name = "pipepipe-plus-build";
+        name = "pipepiped-build";
         gradleTask = ":app:assembleRelease";
         outSubdir = "app/build/outputs/apk/release";
         blurb = "Building SIGNED release APKs (first run fetches Gradle 7.5 + deps over the network)...";
@@ -134,7 +134,7 @@
 
       # `.#debug` keeps the fast, debug-key-signed build for local iteration.
       mkDebugApp = system: mkGradleApp system {
-        name = "pipepipe-plus-debug";
+        name = "pipepiped-debug";
         gradleTask = ":app:assembleDebug";
         outSubdir = "app/build/outputs/apk/debug";
         blurb = "Building debug APKs (debug-key signed, fast local iteration)...";
@@ -152,7 +152,7 @@
           pkgs = mkPkgs system;
         in
         pkgs.writeShellApplication {
-          name = "pipepipe-plus-install";
+          name = "pipepiped-install";
           runtimeInputs = [ pkgs.android-tools pkgs.coreutils pkgs.findutils pkgs.gawk ];
           text = ''
             META_ROOT="''${META_ROOT:-$PWD}"
@@ -219,7 +219,7 @@
           # Same aapt2 fix as the build app; export so `./gradlew` works in the shell.
           GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${aapt2}";
           shellHook = ''
-            echo "PipePipe+ dev shell — JDK 11 + Android SDK (compileSdk 33)."
+            echo "PipePipeD dev shell — JDK 11 + Android SDK (compileSdk 33)."
             echo "Build with:  cd PipePipeClient && ./gradlew :app:assembleDebug -DskipFormatKtlint"
           '';
         };
@@ -227,9 +227,9 @@
     {
       apps = forAllSystems (system:
         let
-          build = { type = "app"; program = "${mkBuildApp system}/bin/pipepipe-plus-build"; };
-          debug = { type = "app"; program = "${mkDebugApp system}/bin/pipepipe-plus-debug"; };
-          install = { type = "app"; program = "${mkInstallApp system}/bin/pipepipe-plus-install"; };
+          build = { type = "app"; program = "${mkBuildApp system}/bin/pipepiped-build"; };
+          debug = { type = "app"; program = "${mkDebugApp system}/bin/pipepiped-debug"; };
+          install = { type = "app"; program = "${mkInstallApp system}/bin/pipepiped-install"; };
         in { inherit build debug install; default = build; });
 
       devShells = forAllSystems (system: { default = mkDevShell system; });
