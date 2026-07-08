@@ -1,0 +1,86 @@
+# Project: PipePipeD — DeArrow support & signed release fork
+
+> Last updated: 2026-07-09 | Phases 1-7 done; Phase 8 IN PROGRESS: 8a (toolchain) + 8b (client rebase) + 8c (meta rebase) DONE; meta awaits USER force-push; 8d (CI workflows) is next.
+
+## >>> SESSION HANDOFF (resume here) <<<
+Rebased PipePipeD onto upstream **v5.2.3-beta** (was v5.1.1) — a MAJOR toolchain jump (see `claude/memories/upstream-v523-rebase-toolchain.md` for details/gotchas). Decisions locked: target the **v5.2.3-beta** line (tracks upstream main); **adopt upstream's env-var signing** (KEY_PATH/KEY_STORE_PASSWORD/KEY_ALIAS/KEY_PASSWORD), dropped the fork keystore.properties block.
+
+**DONE & verified:**
+- **8a Toolchain** — `flake.nix` rewritten: Temurin JDK 25 / Gradle 9.5.1 / AGP 9.2.1 / SDK 37, foojay auto-download off. `nix run .#debug` builds green; single universal APK `PipePipe_5.2.3-beta-universal-debug.apk`; **all 63 DeArrow unit tests pass**.
+- **8b Client rebase** — fork rebased (`188c64eb9` -> `upstream/dev 85498a70d`) into **4 clean commits**, force-pushed to `HritwikSinghal/PipePipeClient patch` (tip `bb824811d`): `feat(dearrow)` -> `perf(detail)` -> `build(release)` (PipePipeD identity + AGP-9 build + env-var signing) -> `fix(dearrow)`. Only hard merge was `NavigationHelper.java`; all DeArrow hook sites verified intact.
+- **8c Meta rebase (LOCAL — not yet pushed)** — meta `patch` reconstructed as **3 clean commits atop `upstream/main` `70db235` (v5.2.3-beta)**: `build(nix)` `17f26fb` (JDK25 flake + `.gitmodules` fork wiring + gitlink pins), `ci(release)` `b2467ed` (release.yml + ci.yml JDK25), `docs` (tip). Built by direct-construct (not literal rebase) to avoid throwaway gitlink churn from the old fix/rename commits; verified byte-faithful (upstream-only files identical to `upstream/main`; our docs/config identical to old tip `6eb92c8`). Submodule pins: client `bb824811d`, extractor `84da35c2` (= upstream's v5.2.3-beta pin, adopted). All 3 commits GPG-signed.
+- **Backups:** tag `backup/pre-rebase-5.2.3` on BOTH repos (meta @ old tip `6eb92c8`, client @ `3b672fcae`) — full rollback point.
+
+**IMMEDIATE next action (USER):** force-push the rebased meta `patch`. It has diverged from `origin/patch` (which still holds the old v5.1.1 history); the client was already pushed, so the client-before-meta ordering is satisfied. Run:
+`! git push --force-with-lease origin patch`
+(Agent force-push is auto-mode-blocked, so the USER must run this.)
+
+**Cleanup pending:** temp branch `patch-rebase` (== `patch`) still exists — safe to delete (`git branch -D patch-rebase`) once `patch` is confirmed good.
+
+**NEXT (8d) CI workflows** (`.github/workflows/release.yml` + `ci.yml`): JDK 11->25 (ci.yml already bumped in 8c; release.yml still needs it); replace keystore.properties decode with decode-to-file + export KEY_PATH(`${RUNNER_TEMP}/fork-release.jks`)/KEY_STORE_PASSWORD(=KEYSTORE_PASSWORD secret)/KEY_ALIAS(literal `fork`)/KEY_PASSWORD; **drop the now-stale `cache-cleanup: never` in ci.yml** (its JDK-11 rationale is obsolete under JDK 25 — the comment still references JDK 11); keep workflow_dispatch, `-pipepiped.<run>` versioning, tag `pipepiped-v*`, `-PforkAbiFilter=universal`, recursive submodules. Add a fail-fast guard (upstream signs SILENTLY UNSIGNED if any KEY_* var is missing).
+**Then 8e** signed release build (`nix run .#build`) + install on Pixel 10a + smoke test (DeArrow across surfaces + SABR playback).
+**Then 8f** update README "changes from upstream" (new JDK25 toolchain, signing switch, minSdk 23) AND the Architecture toolchain bullet below (still describes the OLD AGP 7.3/JDK 11 stack); optionally fold upstream's 1-line SABR "Special Thanks" README credit (consciously dropped in 8c); progress sync; trigger the `workflow_dispatch` release.
+Note: git config has `commit.gpgsign=true` (commits/tags need signing; `git tag` needs `-m`); `git rebase -i` unavailable; the `clean_commit_guard` hook blocks any command/message containing "claude" (avoid the literal token — e.g. don't name CLAUDE.md in a commit message; use non-claude temp paths for `-F` files); **force-push is auto-mode-blocked for the agent — the USER must run `! git push --force-with-lease ...`**.
+
+## Overview
+Personal fork of **PipePipe** (a NewPipe-based Android client) adding **DeArrow** support — crowdsourced de-clickbait **titles + thumbnails** for YouTube — while tracking upstream `InfinityLoop1308/PipePipe`. PipePipe is a thin meta-repo; real code lives in submodules (`PipePipeClient` = the app, `PipePipeExtractor` = the extractor lib). Strategy: **fork only what we modify** — only `PipePipeClient` is forked (to `HritwikSinghal/PipePipeClient`, branch `patch`); the extractor stays upstream-pinned/dormant. The meta-repo's `patch` branch repoints the client submodule at our fork and is the **default branch** on origin. End state: `git fetch upstream` + rebase keeps us current, `nix run .#build` produces a signed **PipePipeD** APK (distinct `applicationId`, installs alongside the official app), and a `workflow_dispatch` GitHub Actions release publishes a signed APK (keystore via GitHub Secrets).
+
+## Current State
+- **Meta `patch`** = **3 logical commits** atop `upstream/main` `70db235` (v5.1.1 -> **v5.2.3-beta**): `build(nix)` `17f26fb` (JDK25 toolchain flake + submodule fork wiring + gitlink pins), `ci(release)` `b2467ed` (signed-release pipeline + CI cache tuning + JDK25), `docs` (tip; README/design/perf/progress). **LOCAL ONLY — diverged from `origin/patch`, awaiting USER force-push.**
+- **Client `patch`** = **4 logical commits** atop **upstream/dev `85498a70d` (v5.2.3-beta)** (tip `bb824811d`, force-pushed 2026-07-09): `feat(dearrow)` -> `perf(detail)` -> `build(release)` (PipePipeD identity, AGP-9 build, env-var signing) -> `fix(dearrow)`.
+- **Submodule pins:** `PipePipeClient` @ fork `patch` `bb824811d`; `PipePipeExtractor` @ upstream `84da35c2` (v5.2.3-beta pin, dormant); `PipePipe.wiki` never initialized. `.gitmodules`: client → fork `patch`; extractor + wiki → upstream.
+- **Backups:** `backup/pre-rebase-5.2.3` in both repos (meta @ `6eb92c8`, client @ `3b672fcae`) — full pre-rebase rollback point. Older `backup/pre-squash-*` tags also present.
+- **Build/release:** `nix run .#build` → signed PipePipeD universal APK; `.#debug` for fast iteration; `.#install` pushes to an ADB device; `workflow_dispatch` release pipeline live (publishes to GitHub Releases, consumed via Obtainium). Verified on-device (Pixel 10a) pre-rebase; post-rebase re-verify is 8e.
+- **Upstream drift (2026-07-09):** RESOLVED for both repos. Upstream moved v5.1.1 -> **v5.2.3-beta** (meta main `70db235`; client dev `85498a70d`). Both `patch` branches rebased onto it (meta local pending push).
+
+## Architecture & Key Decisions
+- **Branching model:** track upstream `main`; work lives on `patch` in both the meta-repo and the client fork. Fork only `PipePipeClient`; extractor stays upstream-pinned/dormant (its fork was deleted — no unique work); `PipePipe.wiki` never forked. `patch` is the default branch on both forks.
+- **Gitlink push ordering (standing gotcha):** always push the **client `patch` BEFORE** the meta gitlink bump — else a recursive clone can't resolve the gitlink in the window between.
+- **Rebase-safe additive pattern:** all fork build changes are additive end-of-file blocks (`-PforkVersionName/Code`, `-PforkAbiFilter`, `-PforkMinify`, signing) that reconfigure `android{}` *after* the upstream DSL — with the fork properties absent, upstream's build is byte-for-byte unchanged (preserves F-Droid reproducibility). Same principle in client code: replace at the **view layer**, never mutate immutable extractor models, never overwrite `VideoDetailFragment.title` (used by share/notification/history).
+- **DeArrow = client-only, display-time.** Unlike SponsorBlock (extractor-side, player-time), DeArrow de-clickbaits **list items** before you click — a view-layer decoration resolved at render time, falling back to the original on any miss. Only extractor dependency: `YoutubeStreamLinkHandlerFactory.getId()` (public API). Covers titles + thumbnails behind toggles across all YouTube surfaces (lists/feed/history/detail/player/queue/dialog).
+- **Stack facts:** client uses **RxJava3**, JSON via **nanojson**, images via **Picasso** (its own OkHttp). Branding via `DeArrowService.getBranding(videoId)` → `Maybe<DeArrowBranding>` (hash-bucket cache, memory→disk→network with stale-while-revalidate, 404-only negative caching, bounded transient retry). Pure/testable cores: `DeArrowTitleFormatter`, `DeArrowThumbnailSelector`, `DeArrowThumbnailUrl`, `DeArrowResponseParser`, `DeArrowDiskCache` (63 unit tests).
+- **Build toolchain (STALE — pre-rebase; 8f must update this bullet):** the fork now targets the **v5.2.3-beta** toolchain — Temurin **JDK 25** / Gradle **9.5.1** / AGP **9.2.1** / SDK **37**, foojay auto-download off (see `claude/memories/upstream-v523-rebase-toolchain.md`). *(Old v5.1.1 stack was AGP 7.3.0 / Gradle 7.5 / JDK 11 / SDK 33 / minSdk 21.)* Still **no NDK** (`:ffmpeg` ships a prebuilt `ffmpeg-kit.aar` with native libs for `arm64-v8a` + `x86_64` only — hence the single universal APK loses nothing vs the old per-ABI splits).
+- **Signing / identity:** post-rebase uses **upstream's env-var signing** (KEY_PATH/KEY_STORE_PASSWORD/KEY_ALIAS/KEY_PASSWORD) — keystore via **GitHub Secrets** (public repo — never committed; local signing uses a gitignored auto-generated keystore). App name **"PipePipeD"** (debug **"PipePipeD Debug"**); base `applicationId` `wtf.pipepiped` set via an additive end-of-file override (upstream's `defaultConfig` line untouched → rebase-clean), with `applicationIdSuffix ".release"` → `wtf.pipepiped.release` and the upstream `.debug` suffix → `wtf.pipepiped.debug`. PKCS12 keystore needs store==key password (separate passwords → "final block not properly padded"). Keystore + passwords backed up at `~/.pipepipe-fork-keystore/` (not in git).
+- **Gotchas:** checkstyle (100-col, `final` params, no unused imports, trailing newline) runs over `src/main`+`src/test` but is NOT in `assembleDebug` and NOT a CI gate (upstream fails it — hand-check new files). An emoji PostToolUse hook blocks edits to files containing emoji (the edit still applies) — don't introduce new emoji. `getBranding` is a `Maybe` — use the 2-arg `subscribe(onSuccess, onError)`. Upstream's release signs **silently unsigned** if any KEY_* env var is missing — 8d adds a fail-fast guard.
+
+## Plan / Phase Status
+| Phase | Status | Progress |
+|-------|--------|----------|
+| 1: Foundation — Nix toolchain, branching & submodule wiring | Done | 7/7 |
+| 2: Map SponsorBlock & design DeArrow | Done | 4/4 |
+| 3: DeArrow service in the Client | Done | 5/5 |
+| 4: DeArrow titles in the Client | Done (on-device verified) | 6/6 |
+| 5: DeArrow thumbnails + interactive marker | Done (on-device verified) | 7/7 |
+| 6: Build config — versioning, identity, signing, nix build | Done | 6/6 |
+| 7: Release workflow & default branch | Done (release published; installed on-device) | 5/5 |
+| 8: Rebase onto upstream v5.2.3-beta + release | In progress | 3/6 (8a,8b,8c done) |
+
+**Phase 8 (rebase onto v5.2.3-beta) status:**
+- [x] 8a Toolchain: rewrite `flake.nix` (JDK 25 / Gradle 9.5.1 / AGP 9.2.1 / SDK 37 / foojay off); `nix run .#debug` green.
+- [x] 8b Client rebase onto `upstream/dev` + AGP-9 `build.gradle` + adopt env-var signing; 4 commits; 63 unit tests pass; force-pushed (`bb824811d`).
+- [x] 8c Meta rebase onto `upstream/main` (v5.2.3-beta); 3 clean commits; client `bb824811d` + extractor `84da35c2` re-pinned; updated flake folded into `build(nix)`; verified byte-faithful. **Local only — awaits USER force-push.**
+- [ ] 8d CI workflows (`release.yml`, `ci.yml`): release.yml JDK 11->25 + env-var signing + fail-fast guard; drop stale `cache-cleanup: never` in ci.yml. (Exact edits in SESSION HANDOFF.)
+- [ ] 8e Signed release build (`nix run .#build`) + install on Pixel 10a + smoke test (DeArrow across surfaces + SABR playback).
+- [ ] 8f README "changes from upstream" (toolchain, signing switch, minSdk 23) + Architecture toolchain bullet + progress sync; trigger `workflow_dispatch` release.
+
+## Reference
+- **Design/investigation docs:** `docs/dearrow-design.md` (blueprint, hook sites, hybrid-marker design); `docs/dearrow-perf-investigation.md` (list-latency root cause + before/after).
+- **Fresh-clone setup:** `git clone --recursive git@github.com:HritwikSinghal/PipePipe.git && cd PipePipe && git checkout patch && git submodule update --init`. Build: `nix run .#build` (first run ~10-40 min). Unit tests: `cd PipePipeClient && nix develop -c ./gradlew :app:testDebugUnitTest --tests 'org.schabi.newpipe.util.dearrow.*'`.
+
+## Deferred / To verify
+DeArrow bug-hunt **Low** findings (Session 13) — documented, not yet fixed:
+- **L1** — toggle-to-original shows the placeholder for blank stored thumbnails. `DeArrowItemController.render()` reloads `originalThumbUrl` on toggle-off; for local-DB items with a blank URL this loads the dummy placeholder. Fix: skip the reload when `originalThumbUrl` is blank.
+- **L2** — the `getBranding` in-flight cohort all resolve empty on a transient failure; the cache self-heals (next rebind re-fetches) but the `DeArrowService` Javadoc overstates the guarantee. Fix: correct the Javadoc, or re-fetch per call site.
+- **L3** — `backoffMillis` shift (`RETRY_BASE_DELAY_MS << (attempt-1)`) overflows past ~53 retries; safe at `MAX_RETRIES = 2`. Add a `Math.min(..., MAX_BACKOFF)` cap if ever made configurable.
+- **L4** — `DeArrowTitleFormatter.toTitleCase` leaves a double space for a bare `>` token (unlikely in practice). Normalize whitespace defensively if desired.
+
+## Recent fixes (post-Phase-7 maintenance)
+- **2026-06-01 — Rename fork PipePipe+ -> PipePipeD; new package namespace.** App name "PipePipe+" -> "PipePipeD" (debug "PipePipe Debug" -> "PipePipeD Debug"); install identity moved off the old `…NewPipeEnhanced.plus` to a fresh base `wtf.pipepiped` (release `wtf.pipepiped.release`, debug `wtf.pipepiped.debug`). Base id set via an additive end-of-file override in `PipePipeClient/app/build.gradle` (upstream `defaultConfig` untouched). Internal token `plus` -> `pipepiped` across CI/nix (release tag `pipepiped-v*`, versionName `-pipepiped.<run>`, nix apps `pipepiped-{build,debug,install}`). Repo + dir names kept as `PipePipe` (mirror upstream). NOTE: a breaking install-identity change — the new APK installs alongside the old `.plus` app; data does not migrate.
+- **2026-06-01 — DeArrow thumbnail aspect-fit + random-fallback default.** Reported as "wrong-fitted / different thumbnail" on ShortCircuit/Paul's Hardware/Level1Techs videos (home + detail). Two root causes, both fixed (meta `b6dc8f1`, client `e1a1ac9f7`):
+  - *Aspect-fit bug:* `DeArrowItemController.crossfadeInDeArrowThumbnail` wrapped the original + new frame in a `TransitionDrawable` (a `LayerDrawable`), whose intrinsic size is the per-dimension **max** of its layers. With a 4:3 `hqdefault`/`sddefault` original vs a 16:9 DeArrow frame, that synthetic size matched neither, so `fitCenter` on the detail header pillarboxed + vertically stretched the frame. Fix: new `FixedSizeTransitionDrawable` pins the transition's intrinsic size to the incoming frame (method renamed `showDeArrowThumbnail`); cross-fade preserved in all cases.
+  - *Random-fallback default:* `dearrow_random_thumbnails` now defaults **off** (`DeArrowSettings` + `dearrow_settings.xml`) — for videos with no community thumbnail it was replacing the real thumbnail with an unrepresentative random frame. README "changes from upstream" synced.
+  - Diagnosis used ADB: pulled the watch-history DB off the (rooted) device to recover the video ID (`Xba54QQfJ4M`), then fetched live DeArrow branding + frames and measured aspects (orig `sddefault` 640x480 4:3 vs random frame 640x360 16:9). The installed APK is release (`BuildConfig.DEBUG=false`), so the `DeArrowPerf` logs/Picasso ribbons are compiled out — logcat showed nothing DeArrow-related. Verified on-device (release `.plus` rebuild — pre-rename): detail header fills with the real thumbnail, no bars/stretch.
+  - **Related, not fixed:** the extractor stores 4:3 thumbnails (`hqdefault`/`sddefault`) for ~90% of items even when `maxresdefault` (16:9) exists; the detail header (`fitCenter`, forced 16:9) shows the higher-res 16:9 `info.getThumbnailUrl()` so it fills, but a 4:3 source would still pillarbox there. Switching the detail header to `centerCrop` (matching list items) would eliminate that at the cost of cropping top/bottom — deferred pending a UI call.
+
+## Blockers
+- None.
