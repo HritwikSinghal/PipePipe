@@ -47,13 +47,9 @@ jobs:
       # cache:'gradle'. That duplicate scheme wrote ~2 GB of caches per run that the release
       # pipeline (on the fork's default branch `patch`) could never use, churning the repo's 10 GB
       # cache budget and evicting the warm release caches. setup-gradle defaults to cache-read-only
-      # on non-default branches, so CI on `main`/PRs restores shared deps without polluting the
-      # budget. cache-cleanup=never: the cleanup provisions Gradle >= 8.11 (needs JVM 17) and fails
-      # under our JDK 11 (non-fatal, but noisy and never prunes).
+      # on non-default branches, so CI on `main`/PRs restores shared deps without polluting the budget.
       - name: Set up Gradle cache
         uses: gradle/actions/setup-gradle@v4
-        with:
-          cache-cleanup: never
 
       - name: Build debug APK
         run: |

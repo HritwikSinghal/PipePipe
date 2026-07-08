@@ -6,12 +6,14 @@
 #     versionName = <upstream versionName>-pipepiped.<run_number>  (override via the version_name input).
 #   The fork never edits the version lines (they're injected at build time via -PforkVersion*), so
 #   rebases onto upstream never conflict on versioning and nothing is committed back to the branch.
-# - Signs with the fork release key, decoded at build time from GitHub Actions secrets
-#   (KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_PASSWORD) so the signature is stable across releases
-#   and the app updates in place. The keystore is never committed; secrets stay safe in a public
-#   repo because this workflow is workflow_dispatch-only.
-# - JDK 11 (Temurin): AGP 7.3.0 / Gradle 7.5 are incompatible with JDK 21, and the Temurin binary
-#   avoids the gcc-15-miscompiled source JDK that broke the local Nix build.
+# - Signs with the fork release key: decoded at build time from GitHub Actions secrets
+#   (KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_PASSWORD) into a temp keystore, then handed to the
+#   upstream signing config via the KEY_PATH / KEY_STORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD env vars
+#   (v5.2.x scheme). Stable signature across releases so the app updates in place; the keystore is
+#   never committed and secrets stay safe in a public repo (workflow_dispatch-only). A pre-build
+#   guard fails fast if a secret is missing -- else the upstream build signs SILENTLY UNSIGNED.
+# - JDK 25 (Temurin): AGP 9.2.1 / Gradle 9.5.1 require JDK 25 (source/target 25); the Temurin binary
+#   matches the local Nix toolchain.
 #
 # Job graph (release and debug builds run in PARALLEL on separate runners):
 #
@@ -108,10 +110,10 @@ jobs:
           ref: ${{ inputs.branch }}
           submodules: recursive
 
-      - name: Set up JDK 11
+      - name: Set up JDK 25
         uses: actions/setup-java@v5
         with:
-          java-version: 11
+          java-version: 25
           distribution: temurin
 
       # Persists the Gradle dependency + build cache across runs (more than setup-java's cache:gradle,
@@ -119,13 +121,12 @@ jobs:
       # re-compiling unchanged sources.
       - name: Set up Gradle cache
         uses: gradle/actions/setup-gradle@v4
-        with:
-          # cache-cleanup=never: the cleanup step provisions Gradle >= 8.11, which requires JVM 17,
-          # but this job runs JDK 11 -- so cleanup fails every run (non-fatal, but noisy and never
-          # actually prunes). 'never' makes the no-op explicit and keeps the logs clean.
-          cache-cleanup: never
 
-      - name: Write signing config from secrets
+      # Decode the release keystore to a temp file. Upstream's signing config (v5.2.x) reads
+      # KEY_PATH / KEY_STORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD from the env (set on the build step
+      # below) and creates the release signingConfig ONLY if all four are present -- otherwise it
+      # signs SILENTLY UNSIGNED. Fail fast here if any secret is missing.
+      - name: Decode signing keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -133,23 +134,22 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${KEYSTORE_BASE64}" ] || [ -z "${KEYSTORE_PASSWORD}" ] || [ -z "${KEY_PASSWORD}" ]; then
-            echo "::error::Missing signing secrets. Set KEYSTORE_BASE64, KEYSTORE_PASSWORD and KEY_PASSWORD in the repo's Actions secrets." >&2
+            echo "::error::Missing signing secrets. Set KEYSTORE_BASE64, KEYSTORE_PASSWORD and KEY_PASSWORD in the repo's Actions secrets -- otherwise the release would be SILENTLY UNSIGNED." >&2
             exit 1
           fi
-          # storeFile is resolved relative to the :app module, and keystore.properties relative to the
-          # client rootProject (PipePipeClient/), so decode/write into the submodule.
-          printf '%s' "${KEYSTORE_BASE64}" | base64 -d > PipePipeClient/app/fork-release.jks
-          cat > PipePipeClient/keystore.properties <<EOF
-          storeFile=fork-release.jks
-          storePassword=${KEYSTORE_PASSWORD}
-          keyAlias=fork
-          keyPassword=${KEY_PASSWORD}
-          EOF
+          printf '%s' "${KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/fork-release.jks"
+          test -s "${RUNNER_TEMP}/fork-release.jks" || { echo "::error::Decoded keystore is empty (bad KEYSTORE_BASE64)." >&2; exit 1; }
 
       - name: Build signed release APKs
         env:
           FORK_VCODE: ${{ needs.prepare.outputs.vcode }}
           FORK_VNAME: ${{ needs.prepare.outputs.vname }}
+          # Signing: upstream's config reads these from the env (keystore decoded in the step above).
+          # KEY_PATH must be absolute; runner.temp is. KEY_ALIAS is the literal keystore alias.
+          KEY_PATH: ${{ runner.temp }}/fork-release.jks
+          KEY_STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: fork
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           cd PipePipeClient
           chmod +x gradlew
@@ -161,6 +161,25 @@ jobs:
             -PforkAbiFilter=universal \
             -PforkMinify=false \
             --no-daemon --build-cache --stacktrace -DskipFormatKtlint
+
+      # Belt-and-braces: even with the pre-build secret guard, confirm the APK is actually signed
+      # so a silently-unsigned build never ships.
+      - name: Verify release APK is signed
+        run: |
+          set -euo pipefail
+          APK=$(find PipePipeClient/app/build/outputs/apk/release -name '*.apk' | head -1)
+          [ -n "${APK}" ] || { echo "::error::No release APK produced." >&2; exit 1; }
+          case "${APK}" in
+            *-unsigned.apk) echo "::error::Release APK is unsigned (${APK}) -- KEY_* env not applied." >&2; exit 1;;
+          esac
+          APKSIGNER=$(find "${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}/build-tools" -name apksigner 2>/dev/null | sort -V | tail -1 || true)
+          if [ -n "${APKSIGNER}" ]; then
+            "${APKSIGNER}" verify --print-certs "${APK}" \
+              || { echo "::error::apksigner could not verify a signature on ${APK}." >&2; exit 1; }
+            echo "Release APK signature verified: ${APK}"
+          else
+            echo "::warning::apksigner not found; relied on the name check only for ${APK}."
+          fi
 
       - name: List built APKs
         run: ls -la PipePipeClient/app/build/outputs/apk/release/
@@ -189,19 +208,14 @@ jobs:
           ref: ${{ inputs.branch }}
           submodules: recursive
 
-      - name: Set up JDK 11
+      - name: Set up JDK 25
         uses: actions/setup-java@v5
         with:
-          java-version: 11
+          java-version: 25
           distribution: temurin
 
       - name: Set up Gradle cache
         uses: gradle/actions/setup-gradle@v4
-        with:
-          # cache-cleanup=never: the cleanup step provisions Gradle >= 8.11, which requires JVM 17,
-          # but this job runs JDK 11 -- so cleanup fails every run (non-fatal, but noisy and never
-          # actually prunes). 'never' makes the no-op explicit and keeps the logs clean.
-          cache-cleanup: never
 
       - name: Build debug APKs (diagnostic, instrumented)
         env:
