@@ -1,0 +1,353 @@
+# Manually-triggered build + GitHub Release for the PipePipeD fork.
+#
+# - Runs only on demand (workflow_dispatch) and builds whatever branch/ref you pass (default: patch).
+# - Versions are derived automatically from upstream's own values in PipePipeClient/app/build.gradle:
+#     versionCode = <upstream versionCode> + run_number,
+#     versionName = <upstream versionName>-pipepiped.<run_number>  (override via the version_name input).
+#   The fork never edits the version lines (they're injected at build time via -PforkVersion*), so
+#   rebases onto upstream never conflict on versioning and nothing is committed back to the branch.
+# - Signs with the fork release key, decoded at build time from GitHub Actions secrets
+#   (KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_PASSWORD) so the signature is stable across releases
+#   and the app updates in place. The keystore is never committed; secrets stay safe in a public
+#   repo because this workflow is workflow_dispatch-only.
+# - JDK 11 (Temurin): AGP 7.3.0 / Gradle 7.5 are incompatible with JDK 21, and the Temurin binary
+#   avoids the gcc-15-miscompiled source JDK that broke the local Nix build.
+#
+# Job graph (release and debug builds run in PARALLEL on separate runners):
+#
+#   prepare --+--> build-release --+
+#             +--> build-debug -----+--> release (changelog + GitHub Release)
+#
+#   - prepare:       computes the version ONCE (single source of truth for both builds + the release).
+#   - build-*:       each builds its own variant and uploads the APKs as an artifact.
+#   - release:       downloads both artifacts, builds the commit changelog, publishes the Release.
+#
+# Speed levers: a single universal APK per variant (-PforkAbiFilter=universal disables per-ABI
+# splitting, so we package + sign one all-architecture APK instead of five), parallel variant builds,
+# a shared persistent Gradle cache (gradle/actions/setup-gradle restores the dependency + build cache
+# across runs), `--build-cache`, and a lean changelog step that reads submodule pointers from the tree
+# (no submodule checkout in the release job).
+name: Release APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch or ref to build from (the fork's changes live on patch)"
+        required: true
+        default: "patch"
+      version_name:
+        description: "Optional versionName override (blank = auto: <base>-pipepiped.<run>)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write # required to create the GitHub Release + tag
+
+# Don't let two manual release runs of the same ref clobber each other's Gradle caches; let an
+# in-progress release finish rather than cancelling a near-complete build.
+concurrency:
+  group: release-${{ github.workflow }}-${{ inputs.branch }}
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Compute the version once so both build jobs and the release job agree.
+  # ---------------------------------------------------------------------------
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      vcode: ${{ steps.ver.outputs.vcode }}
+      vname: ${{ steps.ver.outputs.vname }}
+    steps:
+      - name: Checkout source branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.branch }}
+
+      # Only the client submodule is needed here (just to read its build.gradle) -- skip the
+      # extractor + wiki for a fast prepare. Shallow: we don't need its history.
+      - name: Init client submodule (for build.gradle)
+        run: git submodule update --init --depth 1 PipePipeClient
+
+      - uses: gradle/actions/wrapper-validation@v4
+
+      - name: Compute version
+        id: ver
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+          VERSION_OVERRIDE: ${{ inputs.version_name }}
+          SOURCE_BRANCH: ${{ inputs.branch }}
+        run: |
+          set -euo pipefail
+          # Read upstream's own version straight from defaultConfig. The fork never overrides these
+          # lines in git, so a rebase onto upstream carries the version through automatically.
+          GRADLE_FILE=PipePipeClient/app/build.gradle
+          BASE_CODE=$(grep -E '^[[:space:]]*versionCode[[:space:]]+[0-9]+' "$GRADLE_FILE" | head -1 | grep -oE '[0-9]+')
+          BASE_NAME=$(grep -E '^[[:space:]]*versionName[[:space:]]+"' "$GRADLE_FILE" | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          VCODE=$((BASE_CODE + RUN_NUMBER))
+          if [ -n "${VERSION_OVERRIDE}" ]; then
+            VNAME="${VERSION_OVERRIDE}"
+          else
+            VNAME="${BASE_NAME}-pipepiped.${RUN_NUMBER}"
+          fi
+          echo "vcode=${VCODE}" >> "$GITHUB_OUTPUT"
+          echo "vname=${VNAME}" >> "$GITHUB_OUTPUT"
+          echo "Building versionName=${VNAME} versionCode=${VCODE} from branch=${SOURCE_BRANCH}"
+
+  # ---------------------------------------------------------------------------
+  # Signed PipePipeD release APKs. Runs in parallel with build-debug.
+  # ---------------------------------------------------------------------------
+  build-release:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source branch (with submodules)
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.branch }}
+          submodules: recursive
+
+      - name: Set up JDK 11
+        uses: actions/setup-java@v5
+        with:
+          java-version: 11
+          distribution: temurin
+
+      # Persists the Gradle dependency + build cache across runs (more than setup-java's cache:gradle,
+      # which only caches downloaded deps). Combined with --build-cache below, warm runs skip
+      # re-compiling unchanged sources.
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          # cache-cleanup=never: the cleanup step provisions Gradle >= 8.11, which requires JVM 17,
+          # but this job runs JDK 11 -- so cleanup fails every run (non-fatal, but noisy and never
+          # actually prunes). 'never' makes the no-op explicit and keeps the logs clean.
+          cache-cleanup: never
+
+      - name: Write signing config from secrets
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE_BASE64}" ] || [ -z "${KEYSTORE_PASSWORD}" ] || [ -z "${KEY_PASSWORD}" ]; then
+            echo "::error::Missing signing secrets. Set KEYSTORE_BASE64, KEYSTORE_PASSWORD and KEY_PASSWORD in the repo's Actions secrets." >&2
+            exit 1
+          fi
+          # storeFile is resolved relative to the :app module, and keystore.properties relative to the
+          # client rootProject (PipePipeClient/), so decode/write into the submodule.
+          printf '%s' "${KEYSTORE_BASE64}" | base64 -d > PipePipeClient/app/fork-release.jks
+          cat > PipePipeClient/keystore.properties <<EOF
+          storeFile=fork-release.jks
+          storePassword=${KEYSTORE_PASSWORD}
+          keyAlias=fork
+          keyPassword=${KEY_PASSWORD}
+          EOF
+
+      - name: Build signed release APKs
+        env:
+          FORK_VCODE: ${{ needs.prepare.outputs.vcode }}
+          FORK_VNAME: ${{ needs.prepare.outputs.vname }}
+        run: |
+          cd PipePipeClient
+          chmod +x gradlew
+          # No -x lintVitalRelease: PipePipe sets lint.checkReleaseBuilds=false, so that task does
+          # not exist and excluding it would error.
+          ./gradlew :app:assembleRelease \
+            -PforkVersionCode="${FORK_VCODE}" \
+            -PforkVersionName="${FORK_VNAME}" \
+            -PforkAbiFilter=universal \
+            -PforkMinify=false \
+            --no-daemon --build-cache --stacktrace -DskipFormatKtlint
+
+      - name: List built APKs
+        run: ls -la PipePipeClient/app/build/outputs/apk/release/
+
+      - name: Upload release APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-apks
+          path: PipePipeClient/app/build/outputs/apk/release/*.apk
+          retention-days: 1
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Instrumented diagnostic "PipePipeD Debug" APKs (applicationId
+  # wtf.pipepiped.debug) -- installs alongside the release
+  # PipePipeD and the official app. Logs DeArrow timing/cache via logcat.
+  # Runs in parallel with build-release; needs no signing secrets.
+  # ---------------------------------------------------------------------------
+  build-debug:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source branch (with submodules)
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.branch }}
+          submodules: recursive
+
+      - name: Set up JDK 11
+        uses: actions/setup-java@v5
+        with:
+          java-version: 11
+          distribution: temurin
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          # cache-cleanup=never: the cleanup step provisions Gradle >= 8.11, which requires JVM 17,
+          # but this job runs JDK 11 -- so cleanup fails every run (non-fatal, but noisy and never
+          # actually prunes). 'never' makes the no-op explicit and keeps the logs clean.
+          cache-cleanup: never
+
+      - name: Build debug APKs (diagnostic, instrumented)
+        env:
+          FORK_VCODE: ${{ needs.prepare.outputs.vcode }}
+          FORK_VNAME: ${{ needs.prepare.outputs.vname }}
+        run: |
+          cd PipePipeClient
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug \
+            -PforkVersionCode="${FORK_VCODE}" \
+            -PforkVersionName="${FORK_VNAME}" \
+            -PforkAbiFilter=universal \
+            --no-daemon --build-cache --stacktrace -DskipFormatKtlint
+
+      - name: List debug APKs
+        run: ls -la PipePipeClient/app/build/outputs/apk/debug/
+
+      - name: Upload debug APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-apks
+          path: PipePipeClient/app/build/outputs/apk/debug/*.apk
+          retention-days: 1
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Collect both builds, generate the commit changelog, publish the Release.
+  # No submodule checkout: the client pointer is read from the tree and the
+  # client commit list comes from the GitHub compare API.
+  # ---------------------------------------------------------------------------
+  release:
+    # `prepare` MUST be listed here even though build-release/build-debug already depend on it:
+    # `needs.<job>.outputs` is only readable from a job's DIRECT needs (needs is NOT transitive).
+    # Omitting it makes needs.prepare.outputs.vname/vcode resolve to empty -> a release tagged
+    # `pipepiped-v` with no version. (Regression from the parallelize refactor; fixed here.)
+    needs: [prepare, build-release, build-debug]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history + tags, for the changelog)
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Download release APKs
+        uses: actions/download-artifact@v4
+        with:
+          name: release-apks
+          path: dist/release
+
+      - name: Download debug APKs
+        uses: actions/download-artifact@v4
+        with:
+          name: debug-apks
+          path: dist/debug
+
+      - name: Generate release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_SERVER: ${{ github.server_url }}
+          GH_REPO: ${{ github.repository }}
+          GH_OWNER: ${{ github.repository_owner }}
+          VNAME: ${{ needs.prepare.outputs.vname }}
+          VCODE: ${{ needs.prepare.outputs.vcode }}
+          SOURCE_BRANCH: ${{ inputs.branch }}
+        run: |
+          set -euo pipefail
+
+          # Resolve the client fork's owner/repo from .gitmodules (for commit links).
+          CLIENT_SLUG=$(git config -f .gitmodules --get submodule.PipePipeClient.url \
+            | sed -E 's#^https?://github.com/##; s#^git@github.com:##; s#\.git$##')
+          [ -z "${CLIENT_SLUG}" ] && CLIENT_SLUG="${GH_OWNER}/PipePipeClient"
+
+          # Most recent EXISTING pipepiped-v* tag (this run's tag isn't created until the release step),
+          # i.e. the previous release.
+          PREV_TAG=$(git tag --list 'pipepiped-v*' --sort=-creatordate | head -1 || true)
+          COMMIT_URL="${GH_SERVER}/${GH_REPO}/commit"
+
+          {
+            echo "Automated **PipePipeD** fork build (DeArrow titles + community thumbnails)."
+            echo
+            echo "- Source branch: \`${SOURCE_BRANCH}\`"
+            echo "- versionName: \`${VNAME}\`"
+            echo "- versionCode: \`${VCODE}\`"
+            echo "- applicationId: \`wtf.pipepiped.release\` (installs alongside the official app)"
+            echo
+            echo "## Changelog"
+            echo
+            if [ -n "${PREV_TAG}" ]; then
+              echo "Changes since [\`${PREV_TAG}\`](${GH_SERVER}/${GH_REPO}/releases/tag/${PREV_TAG}):"
+              RANGE="${PREV_TAG}..HEAD"
+            else
+              echo "Initial tracked release."
+              RANGE="HEAD"
+            fi
+            echo
+            # Meta-repo commits. Escaped backtick (\`) keeps the markdown code-span literal in bash.
+            git log --no-merges --pretty=format:"- %s ([\`%h\`](${COMMIT_URL}/%H))" "${RANGE}"
+            echo
+          } > RELEASE_BODY.md
+
+          # Client submodule commits via the GitHub compare API -- reads the gitlink SHAs straight
+          # from the tree, so the release job needs no submodule checkout at all.
+          CLIENT_NOW=$(git ls-tree HEAD PipePipeClient | awk '{print $3}')
+          CLIENT_PREV=""
+          [ -n "${PREV_TAG}" ] && CLIENT_PREV=$(git ls-tree "${PREV_TAG}" PipePipeClient | awk '{print $3}')
+
+          if [ -n "${CLIENT_NOW}" ] && [ -n "${CLIENT_PREV}" ] && [ "${CLIENT_NOW}" != "${CLIENT_PREV}" ]; then
+            {
+              echo
+              echo "### Client changes (\`${CLIENT_SLUG}\`)"
+              echo
+            } >> RELEASE_BODY.md
+            if ! gh api --paginate "repos/${CLIENT_SLUG}/compare/${CLIENT_PREV}...${CLIENT_NOW}" \
+                  --jq '.commits[] | "- " + (.commit.message | split("\n")[0]) + " ([`" + .sha[0:7] + "`](" + .html_url + "))"' \
+                  >> RELEASE_BODY.md; then
+              echo "_(Client commit list unavailable -- compare ${CLIENT_PREV} ... ${CLIENT_NOW}.)_" >> RELEASE_BODY.md
+            fi
+          fi
+
+          cat >> RELEASE_BODY.md <<'EOF'
+
+          ---
+
+          A single **`universal`** APK with native libs for `arm64-v8a` (modern phones) and `x86_64`
+          (emulators) -- the only ABIs the bundled ffmpeg ships. Signed with the fork release key
+          (stable signature for in-place updates).
+
+          A **`*-universal-debug.apk`** ("PipePipeD Debug", id `wtf.pipepiped.debug`) is also
+          attached: an instrumented diagnostic build that logs DeArrow timing/cache details to logcat
+          (tag `DeArrowPerf`) and shows Picasso source ribbons. It installs alongside PipePipeD and
+          is debug-key signed (not for daily use).
+          EOF
+
+          echo "----- RELEASE_BODY.md -----"
+          cat RELEASE_BODY.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: "pipepiped-v${{ needs.prepare.outputs.vname }}"
+          name: "PipePipeD ${{ needs.prepare.outputs.vname }}"
+          target_commitish: ${{ inputs.branch }}
+          body_path: RELEASE_BODY.md
+          files: |
+            dist/release/*.apk
+            dist/debug/*.apk
+          fail_on_unmatched_files: true
