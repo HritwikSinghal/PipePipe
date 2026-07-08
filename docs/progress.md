@@ -1,6 +1,6 @@
 # Project: PipePipeD — DeArrow support & signed release fork
 
-> Last updated: 2026-07-09 | Phases 1-7 done; Phase 8 IN PROGRESS: 8a-8d DONE (meta rebased + force-pushed; CI migrated to env-var signing + JDK25); 8e (signed build + on-device smoke test) is next.
+> Last updated: 2026-07-09 | Phases 1-7 done; Phase 8 IN PROGRESS: 8a-8d DONE; 8e CI half DONE (workflow_dispatch release `pipepiped-v5.2.3-beta-pipepiped.12` built green + APK apksigner-verified signed) -- on-device install + smoke test still pending; 8f (docs) next.
 
 ## >>> SESSION HANDOFF (resume here) <<<
 Rebased PipePipeD onto upstream **v5.2.3-beta** (was v5.1.1) — a MAJOR toolchain jump (see `claude/memories/upstream-v523-rebase-toolchain.md` for details/gotchas). Decisions locked: target the **v5.2.3-beta** line (tracks upstream main); **adopt upstream's env-var signing** (KEY_PATH/KEY_STORE_PASSWORD/KEY_ALIAS/KEY_PASSWORD), dropped the fork keystore.properties block.
@@ -12,9 +12,11 @@ Rebased PipePipeD onto upstream **v5.2.3-beta** (was v5.1.1) — a MAJOR toolcha
 - **8d CI workflows (DONE)** — new commit on top migrating both pipelines to the v5.2.3 toolchain: `release.yml` + `ci.yml` JDK 11->25; `release.yml` signing switched from the `keystore.properties` writer to **env-var signing** (decode keystore to `${RUNNER_TEMP}/fork-release.jks`; build step exports `KEY_PATH`/`KEY_STORE_PASSWORD`(=KEYSTORE_PASSWORD secret)/`KEY_ALIAS`(literal `fork`)/`KEY_PASSWORD`(=KEY_PASSWORD secret)); **pre-build fail-fast guard** if a secret is missing + **post-build apksigner verify** (upstream signs SILENTLY UNSIGNED otherwise); dropped the now-stale `cache-cleanup: never` in ci.yml AND both release jobs (JDK-11 rationale obsolete under JDK 25). YAML validated; not yet CI-exercised (that happens when 8e/8f trigger the release).
 - **Backups:** tag `backup/pre-rebase-5.2.3` on BOTH repos (meta @ old tip `6eb92c8`, client @ `3b672fcae`) — full rollback point.
 
-**IMMEDIATE next action (agent/user):** push the 8d commit (normal push — it's additive on top of the pushed `patch`): `git push origin patch`. Then start 8e.
+**8d pushed** (`dff125b`, in sync with `origin/patch`). Memory migration also committed/pushed (`fbceb4e`).
 
-**NEXT (8e)** signed release build (`nix run .#build`) + install on Pixel 10a + smoke test (DeArrow across surfaces + SABR playback). Sanity-check the CI env-var signing by triggering the `workflow_dispatch` release once (verify the APK is signed and installs in-place).
+**8e CI half DONE (2026-07-09):** triggered the `workflow_dispatch` release on `patch` (run `28977528715`, ~7 min, all 4 jobs green). This was the FIRST CI exercise of the JDK25 + env-var-signing pipeline (8d) -- it validated end-to-end: keystore decoded from secrets, `Build signed release APKs` + `Verify release APK is signed` (apksigner) both passed. Published Release `pipepiped-v5.2.3-beta-pipepiped.12` (versionCode 1115, `wtf.pipepiped.release`) with universal release (73.8 MB) + debug (87 MB) APKs. Only annotations were benign Node-20-deprecation warnings.
+
+**IMMEDIATE next action (user):** the remaining 8e work needs the physical device -- install the release APK from the GitHub Release (or `nix run .#install`) on the Pixel 10a and smoke-test (DeArrow across surfaces + SABR playback); confirm it updates the existing `wtf.pipepiped.release` install in place (stable signature).
 **Then 8f** update README "changes from upstream" (new JDK25 toolchain, signing switch, minSdk 23) AND the Architecture toolchain bullet below (still describes the OLD AGP 7.3/JDK 11 stack); optionally fold upstream's 1-line SABR "Special Thanks" README credit (consciously dropped in 8c); progress sync; trigger the `workflow_dispatch` release.
 Note: git config has `commit.gpgsign=true` (commits/tags need signing; `git tag` needs `-m`); `git rebase -i` unavailable; the `clean_commit_guard` hook blocks any command/message containing "claude" (avoid the literal token — e.g. don't name CLAUDE.md in a commit message; use non-claude temp paths for `-F` files); **force-push is auto-mode-blocked for the agent — the USER must run `! git push --force-with-lease ...`**.
 
@@ -49,14 +51,14 @@ Personal fork of **PipePipe** (a NewPipe-based Android client) adding **DeArrow*
 | 5: DeArrow thumbnails + interactive marker | Done (on-device verified) | 7/7 |
 | 6: Build config — versioning, identity, signing, nix build | Done | 6/6 |
 | 7: Release workflow & default branch | Done (release published; installed on-device) | 5/5 |
-| 8: Rebase onto upstream v5.2.3-beta + release | In progress | 4/6 (8a-8d done) |
+| 8: Rebase onto upstream v5.2.3-beta + release | In progress | 4.5/6 (8a-8d done; 8e CI half done) |
 
 **Phase 8 (rebase onto v5.2.3-beta) status:**
 - [x] 8a Toolchain: rewrite `flake.nix` (JDK 25 / Gradle 9.5.1 / AGP 9.2.1 / SDK 37 / foojay off); `nix run .#debug` green.
 - [x] 8b Client rebase onto `upstream/dev` + AGP-9 `build.gradle` + adopt env-var signing; 4 commits; 63 unit tests pass; force-pushed (`bb824811d`).
 - [x] 8c Meta rebase onto `upstream/main` (v5.2.3-beta); 3 clean commits; client `bb824811d` + extractor `84da35c2` re-pinned; updated flake folded into `build(nix)`; verified byte-faithful; force-pushed; `patch-rebase` deleted.
 - [x] 8d CI workflows (`release.yml`, `ci.yml`): both JDK 11->25; release.yml env-var signing (KEY_PATH/KEY_STORE_PASSWORD/KEY_ALIAS/KEY_PASSWORD) + pre-build fail-fast guard + post-build apksigner verify; dropped stale `cache-cleanup: never` (ci.yml + both release jobs). YAML validated; CI-exercised in 8e/8f.
-- [ ] 8e Signed release build (`nix run .#build`) + install on Pixel 10a + smoke test (DeArrow across surfaces + SABR playback).
+- [~] 8e Release build + smoke test. **CI half DONE** — `workflow_dispatch` run `28977528715` green; Release `pipepiped-v5.2.3-beta-pipepiped.12` published; release APK apksigner-verified (env-var signing validated). **Pending:** on-device install on Pixel 10a + smoke test (DeArrow across surfaces + SABR playback) + in-place-update check.
 - [ ] 8f README "changes from upstream" (toolchain, signing switch, minSdk 23) + Architecture toolchain bullet + progress sync; trigger `workflow_dispatch` release.
 
 ## Reference
