@@ -1,4 +1,0 @@
-- [upstream v5.2.3-beta rebase + toolchain](upstream-v523-rebase-toolchain.md) -- major JDK11->25/Gradle/AGP jump, AGP-9 fork build.gradle, env-var signing, flake values, git/hook gotchas
-- [Automatic mode: auto commit + push](automatic-mode-commit-push.md) -- after each phase, commit & push to fork `patch` without asking; client before meta gitlink
-- [Fork rename: PipePipeD](pipepiped-rename.md) -- renamed from PipePipe+; new package base wtf.pipepiped, Nix apps pipepiped-*, tag pattern pipepiped-v*
-- [DeArrow work](dearrow-work.md) -- cross-fade on swap, prefetch gated to community frames, random-fallback OFF by default, aspect-fit fix via FixedSizeTransitionDrawable

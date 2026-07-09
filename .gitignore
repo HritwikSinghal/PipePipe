@@ -11,3 +11,7 @@
 # The durable plan output under docs/superpowers/plans/ IS tracked.
 /.superpowers
 todo.md
+
+# Claude memory is machine-local now (never committed); relocated to
+# ~/Projects/health/memories/<project-slug>/. See ~/.claude CLAUDE.md "Memory Checkpoint".
+/claude/memories/
