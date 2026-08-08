@@ -402,4 +402,13 @@ Durable traps, all of them hit at least once:
 | Date | From | To | Client drift | Notes |
 |---|---|---|---|---|
 | 2026-07-09 | v5.1.1 | v5.2.3-beta | 169 commits | Major toolchain jump: Gradle 7.5 -> 9.5.1, AGP 7.3 -> 9.2.1, Kotlin 1.7 -> 2.3.21, JDK 11 -> 25, compileSdk 33 -> 37, minSdk 21 -> 23. Adopted upstream's env-var signing, dropped the fork `keystore.properties`. Only hard merge: `NavigationHelper.java`. |
-| 2026-08-08 | v5.2.3-beta | v5.2.5 | 107 commits | No toolchain change. Upstream's `onVariants` versioning refactor silently broke the `-PforkVersion*` override and `release.yml`'s version greps (see 2b, 2c) -- both found by diff triage, not by conflicts. |
+| 2026-08-08 | v5.2.3-beta | v5.2.5 | 107 commits | No toolchain change. Upstream's `onVariants` versioning refactor silently broke the `-PforkVersion*` override and `release.yml`'s version greps (see 2b, 2c) -- both found by diff triage, not by conflicts. A stale extractor pin then broke the build (see 3a). Released `pipepiped-v5.2.5-pipepiped.13`. |
+
+Push the backup tags to both remotes before force-pushing, not just locally: the
+force-push is what makes the old remote history unreachable, so a tag that exists
+only on your machine is not much of a rollback point.
+
+```sh
+git -C PipePipeClient push origin refs/tags/backup/pre-rebase-<V>
+git push origin refs/tags/backup/pre-rebase-<V>
+```

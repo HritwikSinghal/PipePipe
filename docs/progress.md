@@ -1,6 +1,6 @@
 # Project: PipePipeD — DeArrow support & signed release fork
 
-> Last updated: 2026-08-08 | Phases 1-8 done. Phase 9 (sync onto upstream **v5.2.5**) IN PROGRESS: 9a-9f done locally and verified; remaining = force-push (user) + release + on-device smoke test.
+> Last updated: 2026-08-08 | Phases 1-8 done. Phase 9 (sync onto upstream **v5.2.5**) nearly done: 9a-9f done, both repos force-pushed, Release `pipepiped-v5.2.5-pipepiped.13` published (all 4 CI jobs green). Only remaining item: on-device install + smoke test.
 
 ## >>> SESSION HANDOFF (resume here) <<<
 Synced PipePipeD onto upstream **v5.2.5** (was v5.2.3-beta). Unlike the v5.2.3 jump this was **not** a toolchain migration -- upstream left `build.gradle` / `settings.gradle` / `gradle.properties` / the Gradle wrapper byte-identical, so `flake.nix` needed no change. The procedure is now written down: **`docs/upstream-sync-runbook.md`** is the guide to follow for every future sync (it was authored during this sync and corrected against reality as each step ran).
@@ -14,13 +14,9 @@ Synced PipePipeD onto upstream **v5.2.5** (was v5.2.3-beta). Unlike the v5.2.3 j
 - **9f Verified** -- `nix run .#debug` green; **63 DeArrow unit tests pass** (6+16+8+6+18+9, 0 failures). Fork identity + versioning confirmed from `output-metadata.json`: `applicationId wtf.pipepiped.debug`, `versionCode 111900` (= 100 x 1119), `versionName 5.2.5-pipepiped.999`, APK `PipePipe_5.2.5-pipepiped.999-universal-debug.apk`, `BuildConfig.VERSION_CODE 111901` (upstream's ABI-stable semantic preserved).
 - **Backups:** tag `backup/pre-rebase-5.2.5` on BOTH repos (meta @ `17100b8`, client @ `bb824811d`) -- full rollback point.
 
-**IMMEDIATE next action (user):** force-push both repos, **client first** (gitlink ordering rule), then trigger the release:
-```sh
-git -C PipePipeClient push --force-with-lease origin patch
-git push --force-with-lease origin patch
-gh workflow run release.yml --ref patch
-```
-Then install the published APK on the Pixel 10a and smoke-test: DeArrow titles + thumbnails across lists/feed/history/detail/player/queue, SABR playback, and confirm it **updates the existing `wtf.pipepiped.release` install in place** (stable signature). This also clears the v5.2.3-beta on-device check, which it supersedes.
+**Pushed + released (2026-08-08):** backup tags pushed to both remotes first (so the rollback point is durable remotely, not just locally), then both `patch` branches force-pushed -- client `6f2645dd1` then meta `c7377a1`. Release run `31232211191`: **all 4 jobs green** (`prepare` / `build-release` / `build-debug` / `release`), published **`pipepiped-v5.2.5-pipepiped.13`** (versionName `5.2.5-pipepiped.13`, versionCode 1106 + 13 = 1119). The tag name is itself the proof that the 9c version-parse fix worked in CI: an unparsed version would have produced the tag `pipepiped-v-pipepiped.13` with versionCode 13.
+
+**IMMEDIATE next action (user):** install the published release APK on the Pixel 10a and smoke-test -- DeArrow titles + thumbnails across lists/feed/history/detail/player/queue, SABR playback, and confirm it **updates the existing `wtf.pipepiped.release` install in place** (stable signature). This also clears the v5.2.3-beta on-device check, which it supersedes.
 
 Note: git config has `commit.gpgsign=true` (commits/tags need signing; `git tag` needs `-m`); `git rebase -i` unavailable (use detach + `commit --amend` + `cherry-pick` + `branch -f`); the `clean_commit_guard` hook blocks any command/message containing "claude" (use temp paths without that token for `-F` files); **force-push is auto-mode-blocked for the agent -- the USER must run it**. Never hand-type a gitlink SHA into `git update-index --cacheinfo`: it cannot validate a cross-repo object and silently accepts a nonexistent commit, producing a branch no recursive clone can resolve -- derive it with `git -C <path> rev-parse HEAD` or just `git add <path>`.
 
@@ -28,8 +24,8 @@ Note: git config has `commit.gpgsign=true` (commits/tags need signing; `git tag`
 Personal fork of **PipePipe** (a NewPipe-based Android client) adding **DeArrow** support — crowdsourced de-clickbait **titles + thumbnails** for YouTube — while tracking upstream `InfinityLoop1308/PipePipe`. PipePipe is a thin meta-repo; real code lives in submodules (`PipePipeClient` = the app, `PipePipeExtractor` = the extractor lib). Strategy: **fork only what we modify** — only `PipePipeClient` is forked (to `HritwikSinghal/PipePipeClient`, branch `patch`); the extractor stays upstream-pinned/dormant. The meta-repo's `patch` branch repoints the client submodule at our fork and is the **default branch** on origin. End state: `git fetch upstream` + rebase keeps us current, `nix run .#build` produces a signed **PipePipeD** APK (distinct `applicationId`, installs alongside the official app), and a `workflow_dispatch` GitHub Actions release publishes a signed APK (keystore via GitHub Secrets).
 
 ## Current State
-- **Meta `patch`** = **3 logical signed commits** atop `main`/`upstream/main` `efdaf4e` (**v5.2.5**): `build(nix)` `7732e69` (JDK25 toolchain flake + submodule fork wiring + gitlink pins), `ci(release)` `f172ed5` (signed-release pipeline, env-var signing, version-parse fix), `docs` (README/design/perf/progress/sync-runbook). **Local only -- needs a force-push (user).**
-- **Client `patch`** = **4 logical signed commits** atop **upstream/dev `45939efcc` (v5.2.5)**, tip `6f2645dd1`: `feat(dearrow)` -> `perf(detail)` -> `build(release)` (PipePipeD identity, AGP-9 build, env-var signing, fork versioning override) -> `fix(dearrow)`. **Local only -- needs a force-push (user), before the meta push.**
+- **Meta `patch`** = **3 logical signed commits** atop `main`/`upstream/main` `efdaf4e` (**v5.2.5**), tip `c7377a1`, force-pushed and in sync with `origin/patch`: `build(nix)` `7732e69` (JDK25 toolchain flake + submodule fork wiring + gitlink pins), `ci(release)` `f172ed5` (signed-release pipeline, env-var signing, version-parse fix), `docs` `c7377a1` (README/design/perf/progress/sync-runbook).
+- **Client `patch`** = **4 logical signed commits** atop **upstream/dev `45939efcc` (v5.2.5)**, tip `6f2645dd1`, force-pushed and in sync with `origin/patch`: `feat(dearrow)` -> `perf(detail)` -> `build(release)` (PipePipeD identity, AGP-9 build, env-var signing, fork versioning override) -> `fix(dearrow)`.
 - **Submodule pins:** `PipePipeClient` @ fork `patch` `6f2645dd1`; `PipePipeExtractor` @ upstream `aa72c976` (v5.2.5 pin, dormant); `PipePipe.wiki` never initialized. `.gitmodules`: client -> fork `patch`; extractor + wiki -> upstream.
 - **Backups:** `backup/pre-rebase-5.2.5` in both repos (meta @ `17100b8`, client @ `bb824811d`) -- full pre-sync rollback point. Older `backup/pre-rebase-5.2.3` and `backup/pre-squash-*` tags also present.
 - **Build/release:** `nix run .#build` -> signed PipePipeD universal APK; `.#debug` for fast iteration; `.#install` pushes to an ADB device; `workflow_dispatch` release pipeline live (publishes to GitHub Releases, consumed via Obtainium). Last on-device verification was pre-v5.2.3-rebase; the v5.2.5 release supersedes and re-establishes it.
@@ -57,7 +53,7 @@ Personal fork of **PipePipe** (a NewPipe-based Android client) adding **DeArrow*
 | 6: Build config — versioning, identity, signing, nix build | Done | 6/6 |
 | 7: Release workflow & default branch | Done (release published; installed on-device) | 5/5 |
 | 8: Rebase onto upstream v5.2.3-beta + release | Done | 6/6 (release published + apksigner-verified; on-device check superseded by Phase 9) |
-| 9: Sync onto upstream v5.2.5 + release | In progress | 6/7 (9a-9f done; push + release + on-device pending) |
+| 9: Sync onto upstream v5.2.5 + release | Nearly done | 6.5/7 (9a-9f done; released `pipepiped-v5.2.5-pipepiped.13`; on-device smoke test pending) |
 
 **Phase 9 (sync onto v5.2.5) status:**
 - [x] 9a Client rebase onto `upstream/dev` `45939efcc`; 4 signed commits, tip `6f2645dd1`; 3 additive-compatible conflicts; fork file set + `dearrow/` package verified unchanged.
@@ -66,7 +62,8 @@ Personal fork of **PipePipe** (a NewPipe-based Android client) adding **DeArrow*
 - [x] 9d Submodules synced: extractor -> upstream v5.2.5 pin `aa72c976` (required -- composite build); wiki left uninitialized.
 - [x] 9e Meta `patch` recomposed as 3 signed commits atop `main` `efdaf4e`; memory add/delete pair dropped; 8d + docs(progress) folded in.
 - [x] 9f Verified: `nix run .#debug` green, 63 DeArrow unit tests pass, fork identity/versionCode/versionName/APK name confirmed from `output-metadata.json`. Docs updated: README (toolchain SDK 37 + JDK 25, env-var signing, upstream version, runbook pointer; upstream's Community + Special Thanks lines resynced) and the new `docs/upstream-sync-runbook.md`.
-- [ ] 9g Force-push (client then meta -- **user**), trigger `workflow_dispatch` release, then on-device install + smoke test on the Pixel 10a (DeArrow across surfaces + SABR playback + in-place-update check).
+- [x] 9g Backup tags pushed to both remotes, then both `patch` branches force-pushed (client `6f2645dd1` before meta `c7377a1`); `workflow_dispatch` run `31232211191` green on all 4 jobs; Release **`pipepiped-v5.2.5-pipepiped.13`** published (versionCode 1119).
+- [ ] 9h On-device install + smoke test on the Pixel 10a: DeArrow across all surfaces, SABR playback, and the in-place-update check on `wtf.pipepiped.release`.
 
 ## Reference
 - **Upstream sync + release procedure: `docs/upstream-sync-runbook.md`** -- the guide to follow for every future upstream update. Read it before starting one.
