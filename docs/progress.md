@@ -3,7 +3,7 @@
 > Last updated: 2026-08-08 | Phases 1-8 done. Phase 9 (sync onto upstream **v5.2.5**) done bar the on-device smoke test; Release `pipepiped-v5.2.5-pipepiped.13` published (all 4 CI jobs green). Phase 10 (DeArrow hardening + UX fixes) committed on top.
 
 ## >>> SESSION HANDOFF (resume here) <<<
-**Phase 10 (DeArrow hardening + UX fixes)** is committed and pushed on both repos. Build green (`nix run .#debug`), **116 unit tests pass**, 0 failures. See the Phase 10 checklist below for what changed and the three judgement calls that were made.
+**Phase 10 (DeArrow hardening + UX fixes)** is committed, pushed and **released**. Client `patch` tip `bdf9438fa` (5 new signed commits), meta tip `b7a7d18` (2). Build green (`nix run .#debug`), **116 unit tests pass**, 0 failures, and every commit in the series compiles on its own. Release run `31251191446`: all 4 jobs green, **`pipepiped-v5.2.5-pipepiped.14`** published (versionCode 1106 + 14 = 1120, so it updates the .13 install in place).
 
 **Two things still want the device**, both untested on hardware:
 1. **9h** -- install the published release APK on the Pixel 10a and smoke-test DeArrow across all surfaces, SABR playback, and the in-place update of `wtf.pipepiped.release`.
@@ -62,7 +62,7 @@ Personal fork of **PipePipe** (a NewPipe-based Android client) adding **DeArrow*
 | 7: Release workflow & default branch | Done (release published; installed on-device) | 5/5 |
 | 8: Rebase onto upstream v5.2.3-beta + release | Done | 6/6 (release published + apksigner-verified; on-device check superseded by Phase 9) |
 | 9: Sync onto upstream v5.2.5 + release | Nearly done | 6.5/7 (9a-9f done; released `pipepiped-v5.2.5-pipepiped.13`; on-device smoke test pending) |
-| 10: DeArrow hardening + settings/filter UX | Done (needs on-device check) | 6/6 |
+| 10: DeArrow hardening + settings/filter UX | Done (released; needs on-device check) | 8/8 |
 
 **Phase 9 (sync onto v5.2.5) status:**
 - [x] 9a Client rebase onto `upstream/dev` `45939efcc`; 4 signed commits, tip `6f2645dd1`; 3 additive-compatible conflicts; fork file set + `dearrow/` package verified unchanged.
@@ -84,6 +84,8 @@ Personal fork of **PipePipe** (a NewPipe-based Android client) adding **DeArrow*
   - *Filters match what is on screen* -- `LocalItemListAdapter.filter` (playlists, history) and `FeedFragment.filterItems` matched only the DB-stored title, so typing a DeArrow title found nothing. New `DeArrowTitleMatcher` + memory-only `DeArrowService.getCachedBranding` add a second chance without any I/O on the keystroke path.
   - *Settings changes reach bound views* -- new `DeArrowSettingsWatcher` (weak registry of live controllers + one prefs listener, started in `App.onCreate`) re-runs each live `DeArrowItemController` bind, restoring originals first. Chosen over rebinding adapters because the detail header, player and queue never rebind at all. Also covers "download thumbnails", which gates DeArrow thumbnails too.
 - [x] 10g Shared `DeArrowVideoIds` extracted -- the URL -> video-ID parsing was duplicated in the controller and the prefetcher and was about to be a third time in the matcher; it is also the fork's only extractor dependency, so it belongs in one place. Verified: `nix run .#debug` green, **116 unit tests pass** (0 failures), +6 from the new `DeArrowVideoIdsTest`.
+- [x] 10h Committed as 5 logical signed commits atop `6f2645dd1` (hardening -> title re-casing -> cache-clear relocation -> filter matching -> settings watcher), each compile-verified individually rather than only at the tip; client pushed before the meta gitlink bump, per the standing ordering rule.
+- [x] 10i Released: `workflow_dispatch` run `31251191446` green on all 4 jobs, **`pipepiped-v5.2.5-pipepiped.14`** published (universal release + debug APKs).
 
 ## Reference
 - **Upstream sync + release procedure: `docs/upstream-sync-runbook.md`** -- the guide to follow for every future upstream update. Read it before starting one.
