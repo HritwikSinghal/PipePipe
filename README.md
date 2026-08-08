@@ -41,9 +41,16 @@ upstream's, unchanged.
 - **Settings -> DeArrow**: enable DeArrow, replace titles, auto-format titles, mark replaced titles,
   replace thumbnails, and "use random video frames" (random-frame fallback for videos with no
   community submission; off by default — a random frame is often less representative than the
-  channel's own thumbnail), plus links to the DeArrow site & privacy policy.
+  channel's own thumbnail), plus **clear the DeArrow cache** and links to the DeArrow site &
+  privacy policy. Changing any of these takes effect on what is **already on screen**, rather than
+  only on the next time a row is rebuilt.
+- **Searchable replacements** — the filter box in playlists, watch history, and the subscription
+  feed matches the DeArrow title a row is showing as well as the original stored one, so typing
+  what you can see finds it.
 - **Persistent two-tier cache** (memory -> on-disk, survives restart) with stale-while-revalidate,
-  404-only negative caching, bounded transient retries, and ahead-of-bind prefetching.
+  404-only negative caching, bounded transient retries, rate-limit backoff, and ahead-of-bind
+  prefetching. Independent of the image cache: *Settings -> Advanced -> Download thumbnails* clears
+  thumbnails only and no longer discards downloaded DeArrow titles.
 
 ### Instant video detail page
 - Tapping a video from the feed, search, history, or a playlist renders the **thumbnail, title,
