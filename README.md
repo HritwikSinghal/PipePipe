@@ -34,6 +34,10 @@ upstream's, unchanged.
 ### DeArrow — crowdsourced de-clickbait titles & thumbnails (YouTube)
 - **Replacement titles** from the DeArrow community on every surface: feed/lists, video detail, the
   player, the now-playing queue, and info dialogs. Optional auto-formatting of SHOUTING titles.
+  This includes the **experimental Compose UI** (*Settings -> Appearance -> Use experimental new
+  UI*): with it on, upstream routes the channel page, search, related videos, remote playlists,
+  watch history and local playlists through Compose item rows, which the fork now decorates too --
+  titles, thumbnails and the toggle badge all behave as they do in the classic UI.
 - **Replacement thumbnails** on lists and video detail. The original is always kept until a DeArrow
   frame actually loads, so a not-yet-generated frame never leaves a blank thumbnail.
 - **Interactive toggle badge** — a star on each thumbnail flips that row between the DeArrow and the
@@ -51,6 +55,12 @@ upstream's, unchanged.
   404-only negative caching, bounded transient retries, rate-limit backoff, and ahead-of-bind
   prefetching. Independent of the image cache: *Settings -> Advanced -> Download thumbnails* clears
   thumbnails only and no longer discards downloaded DeArrow titles.
+- **Polite to the DeArrow API.** Every request to the single volunteer-run host goes through one of
+  two fixed thread pools -- 3 for what a visible row is waiting on, 1 low-priority for background
+  revalidation -- so no scroll, page load or cold start can burst it. Refreshing a stale bucket
+  sends `If-None-Match`, so an unchanged bucket costs a few hundred bytes of headers instead of
+  re-downloading ~17 KB. Requests are k-anonymous (hash-prefix buckets, no cookies) and identify
+  the app by User-Agent.
 
 ### Instant video detail page
 - Tapping a video from the feed, search, history, or a playlist renders the **thumbnail, title,

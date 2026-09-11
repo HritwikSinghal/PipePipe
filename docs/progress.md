@@ -1,18 +1,54 @@
 # Project: PipePipeD — DeArrow support & signed release fork
 
-> Last updated: 2026-09-11 | Phases 1-10 done. Phase 11 (sync onto upstream **v5.3.1**) rebased, pushed and verified; a bug hunt then fixed 5 defects, which are committed but NOT yet pushed. Release not yet triggered.
+> Last updated: 2026-09-12 | Phases 1-11 done and pushed. Phase 12 (DeArrow under the Compose UI + API politeness) implemented locally, build green + 109 tests pass; NOT yet committed, pushed or released.
 
 ## >>> SESSION HANDOFF (resume here) <<<
-**Phase 11 (sync onto upstream v5.3.1)** is done and pushed: 9 signed client commits atop upstream `08b277619` (v5.3.1) and a 3-commit meta direct-construct atop `main` `944e465`, verified on GitHub by a real recursive clone. No toolchain change.
+**Phase 12 (DeArrow on the experimental Compose UI + request-burst fix)** is implemented and verified locally, **uncommitted**. It answers a user-reported bug: *DeArrow titles and thumbnails do not show on the channel page*.
 
-**A bug hunt over the fork diff then found 9 defects; 5 are fixed on top and are NOT yet pushed** -- client `c8cca06be` + `b0866cb70`, meta gitlink + docs. All 5 were pre-existing since Phase 9, not rebase regressions. Build green (`nix run .#debug`), **109 DeArrow unit tests pass**, 0 failures.
+**Root cause (confirmed, and much wider than the channel page):** with *Settings -> Appearance -> Use experimental new UI* on, `InfoListAdapter.getItemViewType` routes every item to `ComposeInfoItemHolder`, and `LocalItemListAdapter` to `ComposeLocalItemHolder`. Neither had any DeArrow hook, so **channel pages, search, related videos, remote playlists, watch history and local playlists all lost DeArrow at once**. Only the subscription feed still worked -- it is built on a Groupie adapter the flag does not touch, which is exactly why the bug looked surface-specific. The user confirmed the flag is on.
+
+**What changed (8 files, +230/-64):**
+- **New `info_list/DeArrowComposeItem.kt`** -- the Compose equivalent of `DeArrowItemController`, keeping its four invariants (original stays until a replacement really lands; 204 frames never blank a row; badge faded + non-clickable until something landed, sticky-tappable after; preference changes reach rows on screen). Compose needs no restore path: originals are simply what the composable draws absent a replacement.
+- `ComposeItemUiHelper.kt` -- `ComposeItemState` gained `serviceId`/`url`; DeArrow frame, cross-fade and badge wired into `ThumbnailBox`; titles via `DeArrowAwareTitle`.
+- **Prefetch re-enabled** under the Compose UI (both adapters), since rows can now render what it warms.
+- **`DeArrowService` concurrency rebuilt** -- see Phase 12 record below.
 
 **Next actions, in order:**
-1. **Push the fixes** -- client first, then meta. Both fast-forward, no force needed.
-2. **Release** -- `gh workflow run release.yml --ref patch`, then confirm `build-release` green including `Verify release APK is signed`. Run #15 gives versionCode `112300` against the installed `112000`.
-3. **On-device** (carried over, still the only untested layer) -- install on the Pixel 10a: DeArrow across all surfaces, SABR playback, and the in-place update of `wtf.pipepiped.release`. Four of the five fixes are view-layer behaviour that only a device really confirms; the fifth (title casing) is covered by unit tests.
+1. **Review the two bug-hunt reports** (Compose layer, service schedulers) and fix anything confirmed.
+2. **Commit** as logical signed commits, client first, then the meta gitlink (standing ordering rule).
+3. **Push** (user-run if a force is ever needed; these are fast-forward).
+4. **Release** -- `gh workflow run release.yml --ref patch`; confirm `build-release` green including `Verify release APK is signed`. Run #15 gives versionCode `112300` against the installed `112000`.
+5. **On-device** -- install on the Pixel 10a and check DeArrow on the channel page **with the experimental UI both on and off**, plus SABR playback and the in-place update of `wtf.pipepiped.release`.
 
 ---
+
+### Phase 12 record (implemented locally; uncommitted)
+
+**12a DeArrow on the Compose item UI.** As above. `PicassoHelper.cancelTarget(Target)` added (general-purpose cancel; `cancelDeArrowThumbnail` now delegates to it) and `DeArrowSettingsWatcher.addObserver(Runnable)` added so a Compose recomposition counter can follow preference changes -- observers are held strongly forever, so the Javadoc restricts them to process-lifetime singletons.
+
+**12b Two further Compose-path defects found while there, both upstream, neither DeArrow-related:**
+- *Wrong item rendered.* `getItemViewType` sent **every** non-COMMENT type to Compose, but `buildInfoItemState` only builds STREAM/PLAYLIST/CHANNEL and returns null otherwise -- and `ComposeInfoItemHolder` returned **before** `setContent`, so a recycled `ComposeView` went on showing the previous item. STAFF and BULLET_COMMENT items took that path. Fixed with a `COMPOSE_SUPPORTED_TYPES` allowlist, plus a defensive `setContent { }` on null so the allowlist is not load-bearing.
+- *Images dropped at random.* `rememberPicassoBitmap` never cancelled on dispose **and** kept no strong reference to its `Target`. Picasso holds targets weakly, so a GC mid-flight silently lost the image. One `onDispose { cancelTarget(target) }` fixes both -- capturing the target is what keeps it alive.
+
+**12c DeArrow API politeness -- the request-burst fix.** Every network fetch ran on `Schedulers.io()` (unbounded), so the three "concurrency limits" in the code were independent and one path had none: `backgroundRefresh` subscribes fire-and-forget outside every caller's gate, reached from the stale-disk branch that then returns immediately. An audit confirmed at HEAD that **a cold start >6h after the last one fires ~25 simultaneous HTTPS GETs per stream-bearing tab** (75 with three tabs) at a single volunteer-run host, and that OkHttp is no backstop -- its dispatcher neither throttles nor even counts synchronous calls (verified by disassembling okhttp-jvm-5.4.0). Now all fetches go through two fixed daemon pools held on the service: `FETCH_SCHEDULER` (2 threads) for foreground, `REFRESH_SCHEDULER` (1 thread, MIN_PRIORITY) for revalidation. Peak concurrency ~25N -> 3, with the retry amplification gone too.
+
+**12c-2 Conditional revalidation (`If-None-Match`).** Verified empirically before building it -- `curl -I https://sponsor.ajay.app/api/branding/6fe0` returns `etag: "brandingHash;6fe0;YouTube;1789119806000"` and advertises `If-None-Match` in `access-control-allow-headers`. It also settles the bucket size at **17027 bytes**, not the ~37 KB an audit had extrapolated from a single logged sample. `DeArrowDiskCache` now stores the ETag on the header line as `<fetchedAtMs>\t<etag>`; the tab is optional, so **cache files written before this change still read as valid entries** rather than being discarded and re-downloaded on upgrade. `fetchBucketNow` takes a `revalidate` flag, true only on the `backgroundRefresh` path: it re-reads the disk entry, sends the ETag, and on **304** reuses the stored body while bumping `fetchedAtMs`. For a daily user, revalidation is most of the traffic, so this is the largest bandwidth reduction available. Three tests added (round-trip, pre-ETag file compatibility, tab-bearing ETag rejected); count 109 -> 112.
+
+**12c-3 Pool sized against the prefetch gate.** `MAX_FETCH_THREADS` is 3 and `DeArrowPrefetcher.MAX_CONCURRENCY` dropped 2 -> 1. At 2/2 a speculative page warm could occupy the entire shared pool while the row the user is actually looking at queued behind it. Caught by an independent reviewer, not by me.
+
+**12d `LocalItemListAdapter` prefetch conversion capped** at `DeArrowPrefetcher.MAX_PREFETCH_ITEMS` (now public). It converted a **whole** playlist or history page to `StreamInfoItem`s on the main thread to feed a prefetcher that keeps the first 25; `FeedFragment` already did this correctly.
+
+**12e Dead `uuid` dropped** from `DeArrowTitle` / `DeArrowThumbnail` (zero callers; it was parsed and retained for every submission of every cached bucket).
+
+**12f Verified:** `:app:compileDebugKotlin` + `:app:compileDebugJavaWithJavac` green, full `nix run .#debug` APK builds, and `:app:assembleRelease` green under the fork version properties; **112 DeArrow unit tests pass, 0 failures**. Not yet run on a device -- the Compose rendering is the part that most needs one (see 12g), and the 304 path wants a real stale cache to exercise it.
+
+**12g Bug hunt over the changeset (2 reviewers: Compose layer, service concurrency). One Critical, found and fixed:**
+- *Every recycled row cross-faded away the PREVIOUS video's thumbnail, for 200ms.* Self-inflicted by 12a. `ComposeView.setContent` does **not** rebuild the composition (`AbstractComposeView.ensureCompositionCreated` returns early when `composition != null`), so an unkeyed `remember { mutableStateOf<Bitmap?>(null) }` still holds item A's bitmap when the holder binds item B, and `DisposableEffect` only clears it a frame later in the effect phase. That was a one-frame glitch in upstream's code; adding `Crossfade` turned it into a visible 200ms fade from the wrong image -- and from A's DeArrow frame if one had landed. `Crossfade`'s `Transition` is remembered unkeyed too, so keying the bitmaps alone would not have fixed it. Fixed at all three levels: both bitmap holders are now `remember(key)`, and each Compose holder wraps its row in `key(<item identity>)`, which discards the whole subtree's slots on a rebind and closes the class of bug. **This is the single most important reason not to ship the Compose work without a device check.**
+- Also hardened `ComposeLocalItemHolder`'s `?: return` into a `setContent { }` clear, matching its sibling. Unreachable today (its `when` is exhaustive) but it reads as a live guard.
+
+**Reported clean by the hunt, worth not re-checking:** DeArrow title/badge across recycling (the state is keyed, so invariant 3 holds); the badge toggle against invariant 2 (sticky `thumbnailLanded`, 204 leaves it false, inactive badge installs no pointer input so taps fall through); Picasso target lifetime in both hooks; `refreshLiveSites` is main-thread-only via its single `MAIN.post` caller, so the Compose counter write is safe; `COMPOSE_SUPPORTED_TYPES` matches `buildInfoItemState` exactly, with STAFF now reaching `StaffInfoItemHolder` and BULLET_COMMENT falling to `FallbackViewHolder` as the View UI already did.
+
+**Independent check of the root cause** (separate reviewer, cold): agreed, and found no channel-specific defect with the flag OFF. `ChannelVideosFragment`'s items are `StreamInfoItem` bound by `StreamGridInfoItemHolder`, which inherits the hook; channel URLs parse because `YoutubeStreamInfoItemExtractor` falls back to `contentId` for the new `lockupViewModel` shape. The channel path is code-identical to search, related, playlist and kiosk -- which is why "channel only" was never possible and the flag was the answer.
 
 ### Phase 11 record (rebased + verified locally; push and release pending)
 Synced PipePipeD onto upstream **v5.3.1** (was v5.2.5), following `docs/upstream-sync-runbook.md` top to bottom. 47 upstream commits of client drift, **no toolchain change** (the 2a diff over `build.gradle` / `settings.gradle` / `gradle.properties` / the Gradle wrapper was empty, so `flake.nix` was untouched).
@@ -80,7 +116,8 @@ Personal fork of **PipePipe** (a NewPipe-based Android client) adding **DeArrow*
 | 8: Rebase onto upstream v5.2.3-beta + release | Done | 6/6 (release published + apksigner-verified; on-device check superseded by Phase 9) |
 | 9: Sync onto upstream v5.2.5 + release | Done | 7/7 (released `pipepiped-v5.2.5-pipepiped.13`; on-device check superseded by Phase 11) |
 | 10: DeArrow hardening + settings/filter UX | Done (released; needs on-device check) | 8/8 |
-| 11: Sync onto upstream v5.3.1 + release | In progress | 6/8 (11a-11f done locally; push + release trigger pending, both user-run) |
+| 11: Sync onto upstream v5.3.1 + release | Code done | 7/8 (all commits pushed -- both repos clean against `origin/patch`; the release itself was never triggered and is folded into the Phase 12 release) |
+| 12: DeArrow under the Compose UI + API politeness | In progress | 5/7 (12a-12e done locally; bug-hunt review, commit/push/release pending) |
 
 **Phase 9 (sync onto v5.2.5) status:**
 - [x] 9a Client rebase onto `upstream/dev` `45939efcc`; 4 signed commits, tip `6f2645dd1`; 3 additive-compatible conflicts; fork file set + `dearrow/` package verified unchanged.
@@ -125,7 +162,7 @@ Personal fork of **PipePipe** (a NewPipe-based Android client) adding **DeArrow*
   - **Refuted, do not re-file:** the claim that the filter keystroke path is too slow. A second reviewer benchmarked it at 1.38 us/item (2.76 ms for 2000 items) against the real extractor jar and withdrew the jank claim.
   - **Verified clean, worth not re-checking:** no DeArrow hook sits in a method upstream 5.3.1 stopped calling (each confirmed by finding live callers); all recycle/dispose paths balanced across the 7 registration sites; all three rebase conflict resolutions correct; the `DeArrowSettingsWatcher` listener is strongly held and its weak registry is safe to iterate; `DeArrowDiskCache` is clean on concurrent writes, corrupt files, the temp sweep and main-thread I/O; `getBranding` is clean on all three Rx concerns.
   - **Not fixed, release-config findings for later:** the `*-unsigned.apk` name check in `release.yml` is dead code (both `onVariants` blocks rename every output unconditionally), so if `apksigner` is ever absent the signing verification passes having checked nothing -- make that branch `exit 1`. `nix run .#build` produces an *unsigned* release APK while `flake.nix` claims it signs from a `keystore.properties` that nothing reads. No versionCode floor guard: renaming `release.yml` resets `github.run_number` and would silently publish a downgrade. `ci.yml` never runs on `patch`, so a release build is the first CI a fork commit ever gets.
-- [ ] 11i Push the fixes (user-run): client `c8cca06be` then meta -- both fast-forward, no force needed.
+- [x] 11i Pushed. Both repos are clean against `origin/patch` (client tip `b0866cb70`, meta tip `3182b03`).
 - [ ] 11j Release + on-device: `gh workflow run release.yml --ref patch`, confirm the signed-APK check and the versionCode ordering, then install on the Pixel 10a and smoke-test DeArrow, SABR playback and the in-place update. Next run is #15 -> versionName `5.3.1-pipepiped.15`, APK versionCode `100 * (1108 + 15) = 112300`, above the installed `112000`.
 
 ## Reference
