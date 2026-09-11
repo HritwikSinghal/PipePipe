@@ -25,7 +25,7 @@ jobs:
     outputs:
       files: ${{ steps.step-output.outputs.files }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
 
@@ -38,16 +38,24 @@ jobs:
         run: git checkout -B "$BRANCH"
 
       - name: Set up JDK 25
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: 25
-          distribution: "temurin"
-          cache: 'gradle'
+          distribution: temurin
+
+      # Unified on gradle/actions/setup-gradle (same as release.yml) instead of setup-java's
+      # cache:'gradle'. That duplicate scheme wrote ~2 GB of caches per run that the release
+      # pipeline (on the fork's default branch `patch`) could never use, churning the repo's 10 GB
+      # cache budget and evicting the warm release caches. setup-gradle defaults to cache-read-only
+      # on non-default branches, so CI on `main`/PRs restores shared deps without polluting the budget.
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
 
       - name: Build debug APK
         run: |
           cd PipePipeClient
-          ./gradlew assembleDebug lintDebug --stacktrace -DskipFormatKtlint
+          chmod +x gradlew
+          ./gradlew assembleDebug lintDebug --build-cache --stacktrace -DskipFormatKtlint
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
