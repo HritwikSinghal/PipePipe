@@ -1,6 +1,6 @@
 # Project: PipePipeD — DeArrow support & signed release fork
 
-> Last updated: 2026-09-12 | Phases 1-12 done, pushed and released. Latest: **`pipepiped-v5.3.1-pipepiped.16`** (DeArrow under the experimental Compose UI + DeArrow API politeness). Only outstanding item is the on-device check.
+> Last updated: 2026-09-12 | Phases 1-12 done, pushed and released. Latest: **`pipepiped-v5.3.1-pipepiped.17`** (DeArrow under the experimental Compose UI + DeArrow API politeness). Only outstanding item is the on-device check.
 
 ## >>> SESSION HANDOFF (resume here) <<<
 **Phase 12 (DeArrow on the experimental Compose UI + request-burst fix)** is done and released. It answers a user-reported bug: *DeArrow titles and thumbnails do not show on the channel page*.
@@ -13,9 +13,9 @@
 - **Prefetch re-enabled** under the Compose UI (both adapters), since rows can now render what it warms.
 - **`DeArrowService` concurrency rebuilt** -- see Phase 12 record below.
 
-**Shipped.** 4 signed client commits atop `b0866cb70`: `51508b1bf` -> `2fa32c755` -> `b4758d853` -> `a7312b678`. Client pushed before the meta gitlink each time, per the standing rule. `pipepiped-v5.3.1-pipepiped.16` (run `34651886055`, all 4 jobs green) carried the first three; **`a7312b678` is the second hunt pass (12h) and needs its own release run.**
+**Shipped.** 4 signed client commits atop `b0866cb70`: `51508b1bf` -> `2fa32c755` -> `b4758d853` -> `a7312b678`. Client pushed before the meta gitlink each time, per the standing rule. `pipepiped-v5.3.1-pipepiped.16` (run `34651886055`, all 4 jobs green) carried the first three; `a7312b678` (the second hunt pass, 12h) shipped as **`pipepiped-v5.3.1-pipepiped.17`**, run `34652907269`, all 4 jobs green -- versionCode `112500`.
 
-**The one remaining action: on-device.** Install `pipepiped-v5.3.1-pipepiped.16` on the Pixel 10a and check, in this order:
+**The one remaining action: on-device.** Install `pipepiped-v5.3.1-pipepiped.17` on the Pixel 10a and check, in this order:
 1. **DeArrow on the channel page with the experimental UI ON** -- the reported bug, and the whole point of this phase. Then search, related, remote playlists, history, local playlists.
 2. **Scroll a long list hard, with the experimental UI ON.** 12g was a wrong-thumbnail-on-recycle bug that unit tests cannot see and that only shows up while scrolling. If any row briefly shows the previous video's image, the `key()` fix did not take.
 3. The badge toggle, and changing a DeArrow setting with rows on screen.
@@ -126,7 +126,7 @@ Personal fork of **PipePipe** (a NewPipe-based Android client) adding **DeArrow*
 | 9: Sync onto upstream v5.2.5 + release | Done | 7/7 (released `pipepiped-v5.2.5-pipepiped.13`; on-device check superseded by Phase 11) |
 | 10: DeArrow hardening + settings/filter UX | Done (released; needs on-device check) | 8/8 |
 | 11: Sync onto upstream v5.3.1 + release | Done | 8/8 (released `pipepiped-v5.3.1-pipepiped.15`, 2026-09-11; on-device check still outstanding) |
-| 12: DeArrow under the Compose UI + API politeness | Done (needs on-device check) | 8/8 (released `pipepiped-v5.3.1-pipepiped.16`) |
+| 12: DeArrow under the Compose UI + API politeness | Done (needs on-device check) | 8/8 (released `pipepiped-v5.3.1-pipepiped.17`) |
 
 **Phase 9 (sync onto v5.2.5) status:**
 - [x] 9a Client rebase onto `upstream/dev` `45939efcc`; 4 signed commits, tip `6f2645dd1`; 3 additive-compatible conflicts; fork file set + `dearrow/` package verified unchanged.
