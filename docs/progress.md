@@ -5,10 +5,12 @@
 ## >>> SESSION HANDOFF (resume here) <<<
 **Phase 11 (sync onto upstream v5.3.1)** is rebased and verified **locally, not yet pushed**. Client `patch` tip `81c452e20` (9 signed commits atop upstream `08b277619` = v5.3.1), meta `patch` tip = the 3-commit direct-construct atop `main` `944e465` (v5.3.1). Build green (`nix run .#debug`), **106 DeArrow unit tests pass**, 0 failures. No toolchain change.
 
+**Pushed and verified on GitHub** (recursive clone resolves all three submodules). A bug hunt over the fork diff then found four defects; three are fixed on top in client `c8cca06be` / meta `73eb14d`, **not yet pushed**.
+
 **Next actions, in order:**
-1. **Push** -- client `patch` first, then meta (the standing ordering rule). Force-push is agent-blocked, so the user runs both, after pushing the `backup/pre-rebase-5.3.1` tags to both remotes.
-2. **Release** -- `gh workflow run release.yml --ref patch`, then confirm `build-release` green including `Verify release APK is signed`, and that the published versionCode (1108 + run_number) exceeds the last release's 1120.
-3. **On-device** (carried over, still the only untested layer) -- install on the Pixel 10a: DeArrow across all surfaces, SABR playback, and the in-place update of `wtf.pipepiped.release`.
+1. **Push the fixes** -- client first, then meta. Both fast-forward, no force needed.
+2. **Release** -- `gh workflow run release.yml --ref patch`, then confirm `build-release` green including `Verify release APK is signed`. Run #15 gives versionCode `112300` against the installed `112000`.
+3. **On-device** (carried over, still the only untested layer) -- install on the Pixel 10a: DeArrow across all surfaces, SABR playback, and the in-place update of `wtf.pipepiped.release`. The three fixes above are view-layer behaviour that only a device really confirms.
 
 ---
 
@@ -110,8 +112,15 @@ Personal fork of **PipePipe** (a NewPipe-based Android client) adding **DeArrow*
 - [x] 11d Meta `patch` direct-constructed as 3 signed commits atop `main` `944e465`; the Phase 10 gitlink bump and 3 follow-up docs commits folded away.
 - [x] 11e Verified: `nix run .#debug` green, 106 DeArrow unit tests pass, fork identity/versionCode/versionName/APK name re-confirmed from `output-metadata.json` and the generated `BuildConfig`.
 - [x] 11f DeArrow integration audit -- every hook re-checked against upstream's refactored code, layouts and settings entry intact, no new uncovered surface, no media3 coupling.
-- [ ] 11g Push (user-run): backup tags to both remotes, then client `patch`, then meta `patch`, all `--force-with-lease`.
-- [ ] 11h Release + on-device: `gh workflow run release.yml --ref patch`, confirm the signed-APK check and the versionCode ordering, then install on the Pixel 10a and smoke-test DeArrow, SABR playback and the in-place update.
+- [x] 11g Pushed: backup tags to both remotes, then client `patch` `81c452e20`, then meta `patch` `82092f2`. **Ordering was violated in the act** -- the meta went up first while the client push was missed, so for a few minutes the published meta gitlink named a client commit that existed on no remote ref and `git clone --recursive` could not resolve it. Fixed by pushing the client immediately; re-verified with a real recursive clone from GitHub, which now checks out all three submodules. This is exactly what the "client before meta" rule exists to prevent, and it is worth a pre-push check rather than trusting the ordering.
+- [x] 11h Bug hunt over the fork diff (4 parallel reviewers: hook sites, DeArrow core, instant-detail preview, build/release config). Four defects confirmed by hand before acting on any of them; three fixed in client `c8cca06be` (meta gitlink `73eb14d`). All were **pre-existing since Phase 9, not rebase regressions**:
+  - *Crash* -- tapping the channel row during the header-preview window threw an NPE. `startLoading()` nulls `currentInfo` right after `showLoading()` draws the preview, and `onClick()`'s `detail_uploader_root_layout` branch dereferenced it unguarded. Fork-only: upstream's loading state leaves that container INVISIBLE (untouchable); the preview leaves it VISIBLE. Guarded, plus the row is unclickable for the window.
+  - *Stuck preview on error* -- `error_panel` and `detail_content_root_hiding` are siblings on one y-origin, so a failed load painted the metadata row over the error text and Retry, with the clickable uploader row on top making the crash permanent. `handleError()` now tears the preview down, gated on having drawn one.
+  - *Preview never fired on the first video after launch* -- the cold path builds the fragment and commits with `loadVideo = false`, so `selectAndLoadVideo()` never ran and the preview item was dropped, in exactly the case the optimization exists for. Threaded through `getInstance()`.
+  - *Header blanked on the real load* -- the item's thumbnail URL (renderer JSON) differs from `StreamInfo`'s (`playerResponse.videoDetails`), so Picasso missed its URL-keyed cache and cleared the ImageView first. The preview frame is now the placeholder.
+  - **Not fixed, release-config findings for later:** the `*-unsigned.apk` name check in `release.yml` is dead code (both `onVariants` blocks rename every output unconditionally), so if `apksigner` is ever absent the signing verification passes having checked nothing -- make that branch `exit 1`. `nix run .#build` produces an *unsigned* release APK while `flake.nix` claims it signs from a `keystore.properties` that nothing reads. No versionCode floor guard: renaming `release.yml` resets `github.run_number` and would silently publish a downgrade. `ci.yml` never runs on `patch`, so a release build is the first CI a fork commit ever gets.
+- [ ] 11i Push the fixes (user-run): client `c8cca06be` then meta -- both fast-forward, no force needed.
+- [ ] 11j Release + on-device: `gh workflow run release.yml --ref patch`, confirm the signed-APK check and the versionCode ordering, then install on the Pixel 10a and smoke-test DeArrow, SABR playback and the in-place update. Next run is #15 -> versionName `5.3.1-pipepiped.15`, APK versionCode `100 * (1108 + 15) = 112300`, above the installed `112000`.
 
 ## Reference
 - **Upstream sync + release procedure: `docs/upstream-sync-runbook.md`** -- the guide to follow for every future upstream update. Read it before starting one.
