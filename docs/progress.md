@@ -1,9 +1,9 @@
 # Project: PipePipeD — DeArrow support & signed release fork
 
-> Last updated: 2026-09-12 | Phases 1-11 done and pushed. Phase 12 (DeArrow under the Compose UI + API politeness) implemented locally, build green + 109 tests pass; NOT yet committed, pushed or released.
+> Last updated: 2026-09-12 | Phases 1-12 done, pushed and released. Latest: **`pipepiped-v5.3.1-pipepiped.16`** (DeArrow under the experimental Compose UI + DeArrow API politeness). Only outstanding item is the on-device check.
 
 ## >>> SESSION HANDOFF (resume here) <<<
-**Phase 12 (DeArrow on the experimental Compose UI + request-burst fix)** is implemented and verified locally, **uncommitted**. It answers a user-reported bug: *DeArrow titles and thumbnails do not show on the channel page*.
+**Phase 12 (DeArrow on the experimental Compose UI + request-burst fix)** is done and released. It answers a user-reported bug: *DeArrow titles and thumbnails do not show on the channel page*.
 
 **Root cause (confirmed, and much wider than the channel page):** with *Settings -> Appearance -> Use experimental new UI* on, `InfoListAdapter.getItemViewType` routes every item to `ComposeInfoItemHolder`, and `LocalItemListAdapter` to `ComposeLocalItemHolder`. Neither had any DeArrow hook, so **channel pages, search, related videos, remote playlists, watch history and local playlists all lost DeArrow at once**. Only the subscription feed still worked -- it is built on a Groupie adapter the flag does not touch, which is exactly why the bug looked surface-specific. The user confirmed the flag is on.
 
@@ -13,12 +13,14 @@
 - **Prefetch re-enabled** under the Compose UI (both adapters), since rows can now render what it warms.
 - **`DeArrowService` concurrency rebuilt** -- see Phase 12 record below.
 
-**Next actions, in order:**
-1. **Review the two bug-hunt reports** (Compose layer, service schedulers) and fix anything confirmed.
-2. **Commit** as logical signed commits, client first, then the meta gitlink (standing ordering rule).
-3. **Push** (user-run if a force is ever needed; these are fast-forward).
-4. **Release** -- `gh workflow run release.yml --ref patch`; confirm `build-release` green including `Verify release APK is signed`. Run #15 gives versionCode `112300` against the installed `112000`.
-5. **On-device** -- install on the Pixel 10a and check DeArrow on the channel page **with the experimental UI both on and off**, plus SABR playback and the in-place update of `wtf.pipepiped.release`.
+**Shipped.** Committed as 3 signed client commits (`51508b1bf` -> `2fa32c755` -> `b4758d853`) atop `b0866cb70`, meta `fa21239`; client pushed before the meta gitlink per the standing rule. Release run `34651886055` green on all 4 jobs, **`pipepiped-v5.3.1-pipepiped.16`** published (versionCode `112400`, above the installed `112300`).
+
+**The one remaining action: on-device.** Install `pipepiped-v5.3.1-pipepiped.16` on the Pixel 10a and check, in this order:
+1. **DeArrow on the channel page with the experimental UI ON** -- the reported bug, and the whole point of this phase. Then search, related, remote playlists, history, local playlists.
+2. **Scroll a long list hard, with the experimental UI ON.** 12g was a wrong-thumbnail-on-recycle bug that unit tests cannot see and that only shows up while scrolling. If any row briefly shows the previous video's image, the `key()` fix did not take.
+3. The badge toggle, and changing a DeArrow setting with rows on screen.
+4. **DeArrow with the experimental UI OFF** -- 12c changed `DeArrowService` for both UIs, so the classic path needs a regression check too.
+5. SABR playback and the in-place update of `wtf.pipepiped.release`.
 
 ---
 
@@ -116,8 +118,8 @@ Personal fork of **PipePipe** (a NewPipe-based Android client) adding **DeArrow*
 | 8: Rebase onto upstream v5.2.3-beta + release | Done | 6/6 (release published + apksigner-verified; on-device check superseded by Phase 9) |
 | 9: Sync onto upstream v5.2.5 + release | Done | 7/7 (released `pipepiped-v5.2.5-pipepiped.13`; on-device check superseded by Phase 11) |
 | 10: DeArrow hardening + settings/filter UX | Done (released; needs on-device check) | 8/8 |
-| 11: Sync onto upstream v5.3.1 + release | Code done | 7/8 (all commits pushed -- both repos clean against `origin/patch`; the release itself was never triggered and is folded into the Phase 12 release) |
-| 12: DeArrow under the Compose UI + API politeness | In progress | 5/7 (12a-12e done locally; bug-hunt review, commit/push/release pending) |
+| 11: Sync onto upstream v5.3.1 + release | Done | 8/8 (released `pipepiped-v5.3.1-pipepiped.15`, 2026-09-11; on-device check still outstanding) |
+| 12: DeArrow under the Compose UI + API politeness | Done (needs on-device check) | 8/8 (released `pipepiped-v5.3.1-pipepiped.16`) |
 
 **Phase 9 (sync onto v5.2.5) status:**
 - [x] 9a Client rebase onto `upstream/dev` `45939efcc`; 4 signed commits, tip `6f2645dd1`; 3 additive-compatible conflicts; fork file set + `dearrow/` package verified unchanged.
@@ -162,7 +164,8 @@ Personal fork of **PipePipe** (a NewPipe-based Android client) adding **DeArrow*
   - **Refuted, do not re-file:** the claim that the filter keystroke path is too slow. A second reviewer benchmarked it at 1.38 us/item (2.76 ms for 2000 items) against the real extractor jar and withdrew the jank claim.
   - **Verified clean, worth not re-checking:** no DeArrow hook sits in a method upstream 5.3.1 stopped calling (each confirmed by finding live callers); all recycle/dispose paths balanced across the 7 registration sites; all three rebase conflict resolutions correct; the `DeArrowSettingsWatcher` listener is strongly held and its weak registry is safe to iterate; `DeArrowDiskCache` is clean on concurrent writes, corrupt files, the temp sweep and main-thread I/O; `getBranding` is clean on all three Rx concerns.
   - **Not fixed, release-config findings for later:** the `*-unsigned.apk` name check in `release.yml` is dead code (both `onVariants` blocks rename every output unconditionally), so if `apksigner` is ever absent the signing verification passes having checked nothing -- make that branch `exit 1`. `nix run .#build` produces an *unsigned* release APK while `flake.nix` claims it signs from a `keystore.properties` that nothing reads. No versionCode floor guard: renaming `release.yml` resets `github.run_number` and would silently publish a downgrade. `ci.yml` never runs on `patch`, so a release build is the first CI a fork commit ever gets.
-- [x] 11i Pushed. Both repos are clean against `origin/patch` (client tip `b0866cb70`, meta tip `3182b03`).
+- [x] 11i Pushed (client `b0866cb70`, meta `3182b03`).
+- [x] 11j Released: run `34576173936` green, **`pipepiped-v5.3.1-pipepiped.15`** published 2026-09-11 (versionCode `112300`). On-device check still outstanding, now folded into Phase 12.
 - [ ] 11j Release + on-device: `gh workflow run release.yml --ref patch`, confirm the signed-APK check and the versionCode ordering, then install on the Pixel 10a and smoke-test DeArrow, SABR playback and the in-place update. Next run is #15 -> versionName `5.3.1-pipepiped.15`, APK versionCode `100 * (1108 + 15) = 112300`, above the installed `112000`.
 
 ## Reference
