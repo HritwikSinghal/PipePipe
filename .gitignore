@@ -7,6 +7,15 @@
 /result-*
 /.direnv
 
+# Performance rig output. `perf-results/` holds durable captures (baselines, A/B arms,
+# perfetto traces) -- deliberately NOT /tmp, since a reboot would destroy the only thing
+# that makes the next result comparable. `log/` is where PipePipeClient/tools/run-youtube-*.sh
+# default their OUTPUT: they resolve ../log/ from the client dir, which on this meta-repo
+# layout lands here (upstream never hits it -- they clone the client standalone).
+/perf-results/
+/log/
+__pycache__/
+
 # Superpowers brainstorm runtime scratch (HTML mockups + server pid/log) -- not project files.
 # The durable plan output under docs/superpowers/plans/ IS tracked.
 /.superpowers
