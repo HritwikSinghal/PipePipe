@@ -1,8 +1,12 @@
 # Project: PipePipeD — DeArrow support & signed release fork
 
-> Last updated: 2026-09-12 | Phases 1-12 done, pushed and released. Latest: **`pipepiped-v5.3.1-pipepiped.17`** (DeArrow under the experimental Compose UI + DeArrow API politeness). Only outstanding item is the on-device check.
+> Last updated: 2026-09-12 | Phases 1-12 done, pushed and released. Latest: **`pipepiped-v5.3.1-pipepiped.17`** (DeArrow under the experimental Compose UI + DeArrow API politeness). Outstanding: the on-device check, and **Phase 13** (automated performance rig) which is in progress and **local-only, unpushed** -- see `docs/perf-automation-plan.md`.
 
 ## >>> SESSION HANDOFF (resume here) <<<
+**Phase 13 (performance) is paused** -- resume from `docs/perf-automation-plan.md`, which holds
+the rig, the baselines and the campaign. Local-only commits: meta `f7b5c77` + `62f45eb`, client
+`374988dd2` (user force-pushes). Zero app performance improvements shipped yet.
+
 **Phase 12 (DeArrow on the experimental Compose UI + request-burst fix)** is done and released. It answers a user-reported bug: *DeArrow titles and thumbnails do not show on the channel page*.
 
 **Root cause (confirmed, and much wider than the channel page):** with *Settings -> Appearance -> Use experimental new UI* on, `InfoListAdapter.getItemViewType` routes every item to `ComposeInfoItemHolder`, and `LocalItemListAdapter` to `ComposeLocalItemHolder`. Neither had any DeArrow hook, so **channel pages, search, related videos, remote playlists, watch history and local playlists all lost DeArrow at once**. Only the subscription feed still worked -- it is built on a Groupie adapter the flag does not touch, which is exactly why the bug looked surface-specific. The user confirmed the flag is on.
@@ -127,6 +131,7 @@ Personal fork of **PipePipe** (a NewPipe-based Android client) adding **DeArrow*
 | 10: DeArrow hardening + settings/filter UX | Done (released; needs on-device check) | 8/8 |
 | 11: Sync onto upstream v5.3.1 + release | Done | 8/8 (released `pipepiped-v5.3.1-pipepiped.15`, 2026-09-11; on-device check still outstanding) |
 | 12: DeArrow under the Compose UI + API politeness | Done (needs on-device check) | 8/8 (released `pipepiped-v5.3.1-pipepiped.17`) |
+| 13: Automated performance rig + optimization campaign | In progress | 5/8 (rig + baselines + benchmark variant done, local only; C1 fix + A/B pending) |
 
 **Phase 9 (sync onto v5.2.5) status:**
 - [x] 9a Client rebase onto `upstream/dev` `45939efcc`; 4 signed commits, tip `6f2645dd1`; 3 additive-compatible conflicts; fork file set + `dearrow/` package verified unchanged.
@@ -150,6 +155,18 @@ Personal fork of **PipePipe** (a NewPipe-based Android client) adding **DeArrow*
 - [x] 10g Shared `DeArrowVideoIds` extracted -- the URL -> video-ID parsing was duplicated in the controller and the prefetcher and was about to be a third time in the matcher; it is also the fork's only extractor dependency, so it belongs in one place. Verified: `nix run .#debug` green, **116 unit tests pass** (0 failures), +6 from the new `DeArrowVideoIdsTest`.
 - [x] 10h Committed as 5 logical signed commits atop `6f2645dd1` (hardening -> title re-casing -> cache-clear relocation -> filter matching -> settings watcher), each compile-verified individually rather than only at the tip; client pushed before the meta gitlink bump, per the standing ordering rule.
 - [x] 10i Released: `workflow_dispatch` run `31251191446` green on all 4 jobs, **`pipepiped-v5.2.5-pipepiped.14`** published (universal release + debug APKs).
+
+**Phase 13 (automated performance rig + optimization campaign) status:**
+Everything -- rig, harness, baselines, noise floors, the refuted candidate and the method
+lessons -- lives in **`docs/perf-automation-plan.md`**. Do not duplicate it here.
+- [x] 13a-13e Rig, `tools/perf/` harness, baselines with noise floors, non-debuggable
+  `benchmark` variant. Pixel 10a: cold start 389.75 ms (13 ms floor), scroll frame p50
+  4.31-4.43 ms (0.114 ms floor). Emulator: cold start 1112 ms (26 ms floor).
+- [x] 13f-13g Candidate C1 measured and **refuted** (expensive component, but it sits in
+  RecyclerView prefetch slack); reverted. Measurement surface resolved: phone for frame work,
+  emulator for cold start.
+- [ ] 13h-13i Next: candidate C3 (`App.onCreate` main-thread work). Also unwired: `ci.yml` runs
+  no test task, so the unit and androidTest suites execute nowhere.
 
 **Phase 11 (sync onto upstream v5.3.1) status:**
 - [x] 11a Diff triage before rebasing: toolchain diff empty; the four fork build hooks intact; both `release.yml` version greps still match (`def baseVersionCode = 1108`, `def appVersionName = "5.3.1"`); 13-file conflict surface computed.
