@@ -76,6 +76,17 @@ upstream's, unchanged.
   debug+release builds and an auto-generated commit changelog.
 - **Single universal APK** (no per-ABI splits), **R8 disabled** on the fork release, and Gradle
   build-cache stabilization for faster, more predictable CI.
+- **Non-debuggable `benchmark` variant** for performance work — `nix run .#benchmark` builds
+  `wtf.pipepiped.benchmark`, which installs alongside debug and release. It exists because ART
+  refuses to AOT-compile a *debuggable* package: on the debug build `cmd package compile -m speed`
+  reports success and silently leaves the compiler filter at `verify`, so every benchmark number
+  is interpreted+JIT. The variant is added by an additive `-PforkBenchmark` block and a
+  benchmark-only source-set manifest, leaving upstream's build and manifest untouched.
+- **Automated performance rig** — `nix run .#emulator` boots a pinned, headless x86_64 API-36
+  emulator (KVM, swiftshader, animations off, background dexopt and doze disabled) that is
+  reproducible enough to A/B against, and `tools/perf/` holds the measurement harness. The
+  emulator is a **separate** Nix SDK composition, so `nix run .#build` is byte-for-byte
+  unaffected. See [`docs/perf-automation-plan.md`](docs/perf-automation-plan.md).
 
 ### Project layout
 - Fork-only submodules: the app (`PipePipeClient`) tracks this fork's `patch` branch; the extractor
