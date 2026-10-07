@@ -1,16 +1,16 @@
 # Project: PipePipeD — DeArrow support & signed release fork
 
-> Last updated: 2026-10-08 | Phases 1-12 released; **Phase 14 (sync onto upstream v5.4.0) rebased, verified locally and on the emulator -- push + release pending (user force-pushes)**. Phase 13 (perf rig) paused; its local commits now ride along on both rebased branches.
+> Last updated: 2026-10-08 | Phases 1-12 released; Latest: **`pipepiped-v5.4.0-pipepiped.18`** (sync onto upstream v5.4.0). Outstanding: the on-device check. Phase 13 (perf rig) paused; its local commits now ride along on both rebased branches.
 
 ## >>> SESSION HANDOFF (resume here) <<<
-**Phase 14 (sync onto upstream v5.4.0) -- rebased + verified, awaiting push.** Client `patch` = 17 signed commits atop upstream/dev `c2a166f7d` (v5.4.0), tip `4b5e8d04e`; meta `patch` = 11 commits atop `main` `7349b0f` (v5.4.0) plus the docs/gitlink commit. Backups: `backup/pre-rebase-5.4.0` on both repos (meta @ `7a01863`, client @ `374988dd2`), local only.
+**Phase 14 (sync onto upstream v5.4.0) -- released as `pipepiped-v5.4.0-pipepiped.18`** (run `37699946961`, all 4 jobs green, versionCode 1127 -> installed 112700). Backup tags pushed to both remotes before the force-push. Client `patch` = 17 signed commits atop upstream/dev `c2a166f7d` (v5.4.0), tip `4b5e8d04e`; meta `patch` = 11 commits atop `main` `7349b0f` (v5.4.0) plus the docs/gitlink commit. Backups: `backup/pre-rebase-5.4.0` on both repos (meta @ `7a01863`, client @ `374988dd2`), pushed.
 
 - **14a The hard part:** upstream `c2756446f` split `Player` into ~30 controllers and replaced `PlayQueueItem` with Kotlin `PlayerMediaItem`. 2 conflicts. The player-title hook moved to `PlayerLayoutController.updateMetadataViews` (its only caller is `PlayerMetadataController:123`), disposed via `layoutController.disposeDeArrow()` in `Player.destroy()`. `PlayQueueItemBuilder` keeps the unconditional baseline reset on the new type. Toolchain and `app/build.gradle` hooks unchanged (1109 / 5.4.0); `release.yml` greps still match. Extractor -> `c68e10e2`.
 - **14b Fix found by the bug hunt:** an older conflict resolution had re-added `moveThumbnailToContainer()` to `VideoDetailFragment.onDestroyView`, undoing upstream `0dabb0cc6` (player surface kept attached during mini-player transitions). Shipped in `.15`-`.17`; dropped in client `4b5e8d04e`.
 - **14c Verified:** `nix run .#debug` green; **113/113 DeArrow tests**; fork versioning re-proven (`versionCode 110900`, `BuildConfig.VERSION_CODE 110901`, `5.4.0-pipepiped.999`). On the API-36 emulator with `dQw4w9WgXcQ` (locked DeArrow title): the replaced title + badge show on the detail page, the in-player queue row, the fullscreen player title, and the Compose-UI search row (DeArrow thumbnail too), and survive a fling with no crash.
 - **Known DeArrow gaps, all pre-existing (not regressions):** the mini-player overlay title (`updateOverlayData`) shows the original (seen on device); the instant header preview (`showHeaderPreview`) shows the original title/thumbnail until `handleResult`; `layout-large-land/fragment_video_detail.xml` has no `dearrow_badge`; play-queue thumbnails are not swapped. Upstream bug (not ours): `PlayerService.onStartCommand` dereferences `player` before its null guard on `ACTION_MEDIA_BUTTON` after cleanup.
 
-**Next:** user force-pushes client then meta (runbook 7), triggers `release.yml`, then the on-device check on the Pixel 10a.
+**Next:** on the Pixel 10a, install `.18` over `wtf.pipepiped.release` (proves the signature is stable), then DeArrow across list / feed / history / detail / player / queue with the experimental UI on and off, plus SABR playback.
 
 **Phase 13 (performance) is paused** -- resume from `docs/perf-automation-plan.md`, which holds
 the rig, the baselines and the campaign. Local-only commits: meta `f7b5c77` + `62f45eb`, client
@@ -107,10 +107,10 @@ Note: git config has `commit.gpgsign=true` (commits/tags need signing; `git tag`
 Personal fork of **PipePipe** (a NewPipe-based Android client) adding **DeArrow** support — crowdsourced de-clickbait **titles + thumbnails** for YouTube — while tracking upstream `InfinityLoop1308/PipePipe`. PipePipe is a thin meta-repo; real code lives in submodules (`PipePipeClient` = the app, `PipePipeExtractor` = the extractor lib). Strategy: **fork only what we modify** — only `PipePipeClient` is forked (to `HritwikSinghal/PipePipeClient`, branch `patch`); the extractor stays upstream-pinned/dormant. The meta-repo's `patch` branch repoints the client submodule at our fork and is the **default branch** on origin. End state: `git fetch upstream` + rebase keeps us current, `nix run .#build` produces a signed **PipePipeD** APK (distinct `applicationId`, installs alongside the official app), and a `workflow_dispatch` GitHub Actions release publishes a signed APK (keystore via GitHub Secrets).
 
 ## Current State
-- **Meta `patch`** = 12 signed commits atop `main`/`upstream/main` `7349b0f` (**v5.4.0**): the original `build(nix)` / `ci(release)` / `docs` trio plus Phase 10-13 follow-ups (perf rig `tools/perf/`, emulator + benchmark flake apps) and the v5.4.0 docs/gitlink commit. **Ahead of `origin/patch` -- not yet force-pushed.**
-- **Client `patch`** = 17 signed commits atop **upstream/dev `c2a166f7d` (v5.4.0)**, tip `4b5e8d04e`. **Ahead of `origin/patch` -- not yet force-pushed.** Includes the Phase 13 `build: add non-debuggable benchmark variant` commit.
+- **Meta `patch`** = 12 signed commits atop `main`/`upstream/main` `7349b0f` (**v5.4.0**): the original `build(nix)` / `ci(release)` / `docs` trio plus Phase 10-13 follow-ups (perf rig `tools/perf/`, emulator + benchmark flake apps) and the v5.4.0 docs/gitlink commit. Pushed.
+- **Client `patch`** = 17 signed commits atop **upstream/dev `c2a166f7d` (v5.4.0)**, tip `4b5e8d04e`. Pushed. Includes the Phase 13 `build: add non-debuggable benchmark variant` commit.
 - **Submodule pins:** `PipePipeClient` @ fork `patch` `4b5e8d04e`; `PipePipeExtractor` @ upstream `c68e10e2` (v5.4.0 pin, dormant); `PipePipe.wiki` never initialized.
-- **Backups:** `backup/pre-rebase-5.4.0` in both repos (meta @ `7a01863`, client @ `374988dd2`) -- **local only until pushed**. Older `backup/pre-rebase-*` tags also present.
+- **Backups:** `backup/pre-rebase-5.4.0` in both repos (meta @ `7a01863`, client @ `374988dd2`), pushed to both remotes. Older `backup/pre-rebase-*` tags also present.
 - **Build/release:** `nix run .#build` -> signed universal APK; `.#debug`; `.#install`; `.#emulator` boots the pinned API-36 AVD; `workflow_dispatch` release publishes to GitHub Releases (Obtainium).
 
 ## Architecture & Key Decisions
@@ -140,7 +140,7 @@ Personal fork of **PipePipe** (a NewPipe-based Android client) adding **DeArrow*
 | 11: Sync onto upstream v5.3.1 + release | Done | 8/8 (released `pipepiped-v5.3.1-pipepiped.15`, 2026-09-11; on-device check still outstanding) |
 | 12: DeArrow under the Compose UI + API politeness | Done (needs on-device check) | 8/8 (released `pipepiped-v5.3.1-pipepiped.17`) |
 | 13: Automated performance rig + optimization campaign | In progress | 5/8 (rig + baselines + benchmark variant done, local only; C1 fix + A/B pending) |
-| 14: Sync onto upstream v5.4.0 + release | In progress | 6/8 (rebased, fixed, verified locally + emulator; push + release pending) |
+| 14: Sync onto upstream v5.4.0 + release | Done (needs on-device check) | 7/8 (released `pipepiped-v5.4.0-pipepiped.18`, 2026-10-08) |
 
 **Phase 9 (sync onto v5.2.5) status:**
 - [x] 9a Client rebase onto `upstream/dev` `45939efcc`; 4 signed commits, tip `6f2645dd1`; 3 additive-compatible conflicts; fork file set + `dearrow/` package verified unchanged.
