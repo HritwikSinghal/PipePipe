@@ -19,7 +19,8 @@ PipePipe is a **thin meta-repo**; the app lives in submodules.
 
 The meta-repo `patch` branch owns only: `flake.nix`, `flake.lock`,
 `.github/workflows/{ci,release}.yml`, `README.md`, `docs/`, `CLAUDE.md`,
-`.gitmodules`, `.gitignore`, and the submodule gitlinks. Everything else is
+`tools/` (the perf harness), `.gitmodules`, `.gitignore`, and the submodule
+gitlinks. Everything else is
 upstream's.
 
 Two invariants that shape every step below:
@@ -265,7 +266,7 @@ dev shell exports `JAVA_HOME`, `ANDROID_HOME`, and the `aapt2` override; `sdk.di
 in `PipePipeClient/local.properties` is written by `nix run .#debug`, so run the
 build at least once before the tests on a fresh checkout.)
 
-All DeArrow unit tests must pass (**106** as of v5.3.1). Count them from the XML
+All DeArrow unit tests must pass (**113** as of v5.4.0). Count them from the XML
 rather than trusting the console: every class must appear *and* its executed
 count must equal its `@Test` count, or a class silently stopped running.
 
@@ -328,10 +329,16 @@ calls it. The ones that matter: `VideoDetailFragment.handleResult`,
 item holders' `updateFromItem`, `PlayQueueItemBuilder`, `StreamItem.kt`, and both
 adapters' prefetch + recycle-dispose.
 
-Known and **not** a regression: the experimental Compose item holders
-(`ComposeInfoItemHolder`, `ComposeLocalItemHolder`) are DeArrow-blind, and the
-prefetch is deliberately skipped under `shouldUseExperimentalNewUi`. Re-check
-each sync that upstream has not made that UI the default.
+The experimental Compose item holders (`ComposeInfoItemHolder`,
+`ComposeLocalItemHolder`) are hooked through `info_list/DeArrowComposeItem.kt`
+since Phase 12 -- include them in this audit; the maintainer runs with that UI on.
+
+> **Precedent (v5.4.0).** Upstream split the `Player` god class into ~30
+> controllers and replaced `PlayQueueItem` with Kotlin `PlayerMediaItem`. The
+> player title hook moved to `PlayerLayoutController.updateMetadataViews`
+> (called from `PlayerMetadataController`), disposed from `Player.destroy()`.
+> When a hook's host file is rewritten wholesale, take upstream's file and
+> re-find the view write (`grep titleTextView`) rather than merging hunks.
 
 ## 5. Rebase the meta repo
 
@@ -373,7 +380,7 @@ Verify byte-faithfulness with two diffs that must both be empty:
 ```sh
 # A: nothing outside the fork-owned set changed -- must print nothing
 git diff main patch --name-only | grep -vE \
-  '^(flake\.nix|flake\.lock|\.github/workflows/(ci|release)\.yml|README\.md|docs/|CLAUDE\.md|\.gitmodules|\.gitignore|PipePipeClient|PipePipeExtractor)'
+  '^(flake\.nix|flake\.lock|\.github/workflows/(ci|release)\.yml|README\.md|docs/|tools/|CLAUDE\.md|\.gitmodules|\.gitignore|PipePipeClient|PipePipeExtractor)'
 # B: our own content survived
 git diff <old-meta-tip> patch -- flake.nix flake.lock .github CLAUDE.md .gitmodules .gitignore
 ```
@@ -438,6 +445,12 @@ Confirm before calling it done:
 
 Durable traps, all of them hit at least once:
 
+- In **zsh**, `git show $REV:path` is mangled: `$REV:a...` is read as the `:a`
+  path modifier. Brace it -- `git show "${REV}:path"`.
+- `git rebase` in the meta repo can die at the first pick with `fatal: invalid
+  commit position. commit-graph is likely corrupt` (from the submodule gitlink
+  merge) even though every `commit-graph verify` is clean. Abort and rerun with
+  `git -c core.commitGraph=false rebase ...`.
 - `commit.gpgsign` and `tag.gpgsign` are **on**. `git tag` must be annotated
   (`-m`). `git rebase -i` is unavailable in this environment -- to reword a
   non-tip commit, detach, `commit --amend -F <file>`, `cherry-pick` the rest,
@@ -471,6 +484,7 @@ Durable traps, all of them hit at least once:
 | 2026-07-09 | v5.1.1 | v5.2.3-beta | 169 commits | Major toolchain jump: Gradle 7.5 -> 9.5.1, AGP 7.3 -> 9.2.1, Kotlin 1.7 -> 2.3.21, JDK 11 -> 25, compileSdk 33 -> 37, minSdk 21 -> 23. Adopted upstream's env-var signing, dropped the fork `keystore.properties`. Only hard merge: `NavigationHelper.java`. |
 | 2026-08-08 | v5.2.3-beta | v5.2.5 | 107 commits | No toolchain change. Upstream's `onVariants` versioning refactor silently broke the `-PforkVersion*` override and `release.yml`'s version greps (see 2b, 2c) -- both found by diff triage, not by conflicts. A stale extractor pin then broke the build (see 3a). Released `pipepiped-v5.2.5-pipepiped.13`. |
 | 2026-09-11 | v5.2.5 | v5.3.1 | 47 commits | No toolchain change; the 2b/2c hooks all survived, so the triage found nothing to fix. Upstream reverted **media3 -> ExoPlayer 2.18.7** with its SABR rewrite, rewriting `Player.java` (+245/-224) -- our 4 anchor lines re-merged cleanly and no fork file references media3. 3 trivial conflicts. The extractor pin moved `aa72c976` -> `c0cd0d61`. Follow the DeArrow hook audit in step 4a: a compile-clean rebase says nothing about a hook stranded off a live path. |
+| 2026-10-08 | v5.3.1 | v5.4.0 | 25 commits | No toolchain change; 2b/2c hooks survived. Upstream split `Player` into controllers and replaced `PlayQueueItem` with `PlayerMediaItem` (see 4a precedent) -- 2 conflicts. Bug hunt caught a stale `onDestroyView` line from an earlier resolution. Extractor `c0cd0d61` -> `c68e10e2`. Verified on the emulator (`nix run .#emulator`). |
 
 Push the backup tags to both remotes before force-pushing, not just locally: the
 force-push is what makes the old remote history unreachable, so a tag that exists
