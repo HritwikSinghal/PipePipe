@@ -91,7 +91,7 @@ upstream's, unchanged.
 ### Project layout
 - Fork-only submodules: the app (`PipePipeClient`) tracks this fork's `patch` branch; the extractor
   (`PipePipeExtractor`) stays pinned to upstream. Only what we change is forked.
-- Currently tracking upstream **v5.3.1**. Keeping current is a documented procedure --
+- Currently tracking upstream **v5.4.0**. Keeping current is a documented procedure --
   see [`docs/upstream-sync-runbook.md`](docs/upstream-sync-runbook.md).
 
 ## Building & installing (PipePipeD fork)
