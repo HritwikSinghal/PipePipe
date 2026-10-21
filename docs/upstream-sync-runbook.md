@@ -174,6 +174,11 @@ Resolve conflicts with these rules:
 - **`app/build.gradle`**: take upstream's body wholesale, keep our end-of-file
   blocks, then apply whatever 2b turned up.
 - **`.gitignore`, `gradle.properties`**: take upstream, re-add our lines.
+- **Upstream DeArrow** (since v5.5.0): before replaying our commits, branch off the pin and
+  `git revert --no-commit` every upstream DeArrow commit into one `revert(dearrow)` commit. Check
+  `git log --oneline -i --grep=dearrow <old-pin>..<new-pin>` for new ones, and
+  `git grep -n 'name="dearrow_' -- 'app/src/main/res/values-*'` for translations added by
+  unrelated l10n commits.
 
 Then confirm nothing was dropped:
 
@@ -485,6 +490,7 @@ Durable traps, all of them hit at least once:
 | 2026-08-08 | v5.2.3-beta | v5.2.5 | 107 commits | No toolchain change. Upstream's `onVariants` versioning refactor silently broke the `-PforkVersion*` override and `release.yml`'s version greps (see 2b, 2c) -- both found by diff triage, not by conflicts. A stale extractor pin then broke the build (see 3a). Released `pipepiped-v5.2.5-pipepiped.13`. |
 | 2026-09-11 | v5.2.5 | v5.3.1 | 47 commits | No toolchain change; the 2b/2c hooks all survived, so the triage found nothing to fix. Upstream reverted **media3 -> ExoPlayer 2.18.7** with its SABR rewrite, rewriting `Player.java` (+245/-224) -- our 4 anchor lines re-merged cleanly and no fork file references media3. 3 trivial conflicts. The extractor pin moved `aa72c976` -> `c0cd0d61`. Follow the DeArrow hook audit in step 4a: a compile-clean rebase says nothing about a hook stranded off a live path. |
 | 2026-10-08 | v5.3.1 | v5.4.0 | 25 commits | No toolchain change; 2b/2c hooks survived. Upstream split `Player` into controllers and replaced `PlayQueueItem` with `PlayerMediaItem` (see 4a precedent) -- 2 conflicts. Bug hunt caught a stale `onDestroyView` line from an earlier resolution. Extractor `c0cd0d61` -> `c68e10e2`. Verified on the emulator (`nix run .#emulator`). |
+| 2026-10-22 | v5.4.0 | v5.5.0 | 84 commits | No toolchain change; 2b/2c hooks survived (1110 / 5.5.0). **Upstream shipped its own DeArrow** (`2a7aa49bf` + `7fbda5ef7`) with the same class names and pref keys as ours, so the client gets one `revert(dearrow)` commit on top of the pin before our commits replay. That revert also strips upstream's `dearrow_*` translations (incl. the later Swedish ones) but keeps the coroutines dependency (`ImageViewerActivity` uses it). 6 conflicts: detail-page already-drawn guard (keep upstream's `tabsBuiltForUrl` AND our `renderedInfoUrl`), local-list filter (upstream's playlist-name match + our DeArrow matcher), `InfoListAdapter` `shownList()`, imports. Meta: gitlink-only conflicts. Extractor `c68e10e2` -> `1a09d20e`. |
 
 Push the backup tags to both remotes before force-pushing, not just locally: the
 force-push is what makes the old remote history unreachable, so a tag that exists

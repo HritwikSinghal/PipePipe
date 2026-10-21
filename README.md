@@ -32,6 +32,12 @@ Everything in this section is what differs from upstream; the rest of this READM
 upstream's, unchanged.
 
 ### DeArrow — crowdsourced de-clickbait titles & thumbnails (YouTube)
+- **Replaces upstream's DeArrow.** Upstream PipePipe ships its own DeArrow from v5.5.0; PipePipeD
+  removes it (one `revert(dearrow)` commit in the client) and keeps the implementation below. Both
+  use the same preference keys (`dearrow_enable`, `dearrow_replace_titles`,
+  `dearrow_replace_thumbnails`), so existing settings carry over. Differences that matter: ours is
+  **on by default**, covers the experimental Compose UI, the player and the queue, keeps the original
+  thumbnail until a replacement loads (upstream blanks it to a placeholder), and caches to disk.
 - **Replacement titles** from the DeArrow community on every surface: feed/lists, video detail, the
   player, the now-playing queue, and info dialogs. Optional auto-formatting of SHOUTING titles.
   This includes the **experimental Compose UI** (*Settings -> Appearance -> Use experimental new
