@@ -1,15 +1,15 @@
 # Project: PipePipeD — DeArrow support & signed release fork
 
-> Last updated: 2026-10-22 | Phases 1-12, 14 released; **Phase 15 (sync onto upstream v5.5.0, upstream's DeArrow dropped) rebased + verified locally, push and release pending.** Previous release: `pipepiped-v5.4.0-pipepiped.18`. Phase 13 (perf rig) paused.
+> Last updated: 2026-10-22 | Phases 1-12, 14, 15 released; Latest: **`pipepiped-v5.5.0-pipepiped.19`** (sync onto upstream v5.5.0, upstream's DeArrow dropped in favour of ours). Outstanding: the on-device check. Phase 13 (perf rig) paused.
 
 ## >>> SESSION HANDOFF (resume here) <<<
-**Phase 15 (sync onto upstream v5.5.0) -- rebased and verified locally; force-push + release pending user go.** Upstream v5.5.0 ships its own DeArrow (`2a7aa49bf` + `7fbda5ef7`, Kotlin + coroutines); decision 2026-10-22: **keep ours, drop theirs** (comparison: theirs lacks Compose-UI, player and queue coverage, blanks thumbnails to a placeholder while loading, memory-only cache, unbounded request concurrency; same class names and pref keys as ours, so both cannot coexist).
+**Phase 15 (sync onto upstream v5.5.0) -- released as `pipepiped-v5.5.0-pipepiped.19`** (run `39691510591`, all 4 jobs green, `apksigner` verified, versionCode 1129 -> APK 112900, above the installed 112700). Curated notes prepended to the auto-generated body with `gh release edit`. Upstream v5.5.0 ships its own DeArrow (`2a7aa49bf` + `7fbda5ef7`, Kotlin + coroutines); decision 2026-10-22: **keep ours, drop theirs** (comparison: theirs lacks Compose-UI, player and queue coverage, blanks thumbnails to a placeholder while loading, memory-only cache, unbounded request concurrency; same class names and pref keys as ours, so both cannot coexist).
 
 - **15a Client** = `revert(dearrow)` `139b5f5b1` atop upstream/dev `b91f008fb` (v5.5.0), then our 17 signed commits replayed; tip `b6e43a767`. The revert drops upstream's DeArrow code, settings screen and all `dearrow_*` translations (incl. Swedish from `24db7c535`), keeps `kotlinx-coroutines` (used by `ImageViewerActivity`) and upstream's `tabsBuiltForUrl` guard. 6 conflicts, see the runbook's sync-history row. `util/dearrow/` and its tests byte-identical to the pre-rebase tip; all 25 hook calls and 6 badge layouts present. New upstream `ChatAdapter` is live chat, not a video surface.
 - **15b Meta** = 14 commits rebased onto `main` `d4b6314` (v5.5.0), gitlink-only conflicts; byte-faithfulness diffs A and B both empty. Extractor -> `1a09d20e`. README fork section gained the "replaces upstream's DeArrow" entry.
 - **15c Verified:** `nix run .#debug` green; **113/113 DeArrow tests** (7 classes, counted from the XML); fork versioning re-proven (`versionCode 111000`, `BuildConfig.VERSION_CODE 111001`, `5.5.0-pipepiped.999`, `wtf.pipepiped.debug`). Not run on a device or emulator.
-- **Backups:** `backup/pre-rebase-5.5.0` in both repos (local only until pushed -- push them BEFORE the force-push).
-- **Next:** push backup tags, force-push client then meta, `gh workflow run release.yml --ref patch`, then prepend the curated notes (drafted this session) to the published release. On-device check of `.18` was never done; fold it into this release's check.
+- **Backups:** `backup/pre-rebase-5.5.0` in both repos (meta @ `b136277`, client @ `4b5e8d04e`), pushed before the force-push. The user ran both force-pushes (auto mode blocks the agent's).
+- **Next:** on the Pixel 10a, install `.19` over `wtf.pipepiped.release` (proves the signature is stable), then DeArrow across list / feed / history / detail / player / queue with the experimental UI on and off, plus SABR playback. Also confirm existing DeArrow settings survived (shared pref keys).
 
 **Phase 14 (v5.4.0 sync)** released as `pipepiped-v5.4.0-pipepiped.18`; detail below.
 
@@ -117,10 +117,10 @@ Note: git config has `commit.gpgsign=true` (commits/tags need signing; `git tag`
 Personal fork of **PipePipe** (a NewPipe-based Android client) adding **DeArrow** support — crowdsourced de-clickbait **titles + thumbnails** for YouTube — while tracking upstream `InfinityLoop1308/PipePipe`. PipePipe is a thin meta-repo; real code lives in submodules (`PipePipeClient` = the app, `PipePipeExtractor` = the extractor lib). Strategy: **fork only what we modify** — only `PipePipeClient` is forked (to `HritwikSinghal/PipePipeClient`, branch `patch`); the extractor stays upstream-pinned/dormant. The meta-repo's `patch` branch repoints the client submodule at our fork and is the **default branch** on origin. End state: `git fetch upstream` + rebase keeps us current, `nix run .#build` produces a signed **PipePipeD** APK (distinct `applicationId`, installs alongside the official app), and a `workflow_dispatch` GitHub Actions release publishes a signed APK (keystore via GitHub Secrets).
 
 ## Current State
-- **Meta `patch`** = 14 signed commits atop `main`/`upstream/main` `d4b6314` (**v5.5.0**) plus the Phase 15 docs commit. Local; needs force-push.
-- **Client `patch`** = 17 signed commits atop the `revert(dearrow)` commit `139b5f5b1`, itself atop **upstream/dev `b91f008fb` (v5.5.0)**; tip `b6e43a767`. Local; needs force-push.
+- **Meta `patch`** = 14 signed commits atop `main`/`upstream/main` `d4b6314` (**v5.5.0**) plus the Phase 15 docs commits. Pushed.
+- **Client `patch`** = 17 signed commits atop the `revert(dearrow)` commit `139b5f5b1`, itself atop **upstream/dev `b91f008fb` (v5.5.0)**; tip `b6e43a767`. Pushed.
 - **Submodule pins:** `PipePipeClient` @ `b6e43a767`; `PipePipeExtractor` @ upstream `1a09d20e` (v5.5.0 pin, dormant); `PipePipe.wiki` never initialized.
-- **Backups:** `backup/pre-rebase-5.5.0` in both repos (meta @ `b136277`, client @ `4b5e8d04e`), local only. Older `backup/pre-rebase-*` tags pushed.
+- **Backups:** `backup/pre-rebase-5.5.0` in both repos (meta @ `b136277`, client @ `4b5e8d04e`), pushed to both remotes. Older `backup/pre-rebase-*` tags pushed.
 - **Build/release:** `nix run .#build` -> signed universal APK; `.#debug`; `.#install`; `.#emulator` boots the pinned API-36 AVD; `workflow_dispatch` release publishes to GitHub Releases (Obtainium).
 
 ## Architecture & Key Decisions
@@ -151,7 +151,7 @@ Personal fork of **PipePipe** (a NewPipe-based Android client) adding **DeArrow*
 | 12: DeArrow under the Compose UI + API politeness | Done (needs on-device check) | 8/8 (released `pipepiped-v5.3.1-pipepiped.17`) |
 | 13: Automated performance rig + optimization campaign | In progress | 5/8 (rig + baselines + benchmark variant done, local only; C1 fix + A/B pending) |
 | 14: Sync onto upstream v5.4.0 + release | Done (needs on-device check) | 7/8 (released `pipepiped-v5.4.0-pipepiped.18`, 2026-10-08) |
-| 15: Sync onto upstream v5.5.0 (drop upstream's DeArrow) + release | In progress | 3/5 (rebased, built, 113/113 tests; push + release pending) |
+| 15: Sync onto upstream v5.5.0 (drop upstream's DeArrow) + release | Done (needs on-device check) | 4/5 (released `pipepiped-v5.5.0-pipepiped.19`, 2026-10-22) |
 
 **Phase 9 (sync onto v5.2.5) status:**
 - [x] 9a Client rebase onto `upstream/dev` `45939efcc`; 4 signed commits, tip `6f2645dd1`; 3 additive-compatible conflicts; fork file set + `dearrow/` package verified unchanged.
