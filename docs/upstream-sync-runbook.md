@@ -37,10 +37,10 @@ Two invariants that shape every step below:
 ## 1. Preflight
 
 ```sh
-cd ~/Projects/PipePipe
+cd <meta-repo-root>
 git fetch upstream --tags
 git -C PipePipeClient fetch upstream --tags
-# Every initialized submodule, whatever its remote layout (see 3a -- the extractor
+# Every initialized submodule, whatever its remote layout (see 3b -- the extractor
 # has only `origin`, and it points at upstream). Tolerant of missing remotes.
 git submodule foreach 'git fetch --all --tags || true'
 git status --short                       # must be clean
@@ -154,11 +154,28 @@ Most fork files are new DeArrow files and never conflict.
 
 ## 3. Rebase the client fork
 
+Since v5.5.0 upstream ships **its own DeArrow**, so the client is no longer "our
+commits on upstream's pin". It is three layers:
+
+```
+<new-client-pin>                 upstream, untouched
+  revert(dearrow)                ONE commit: removes upstream's DeArrow (section 3a)
+    our N fork commits           replayed by the rebase
+```
+
+Never carry the old revert commit forward. It reverts only the upstream DeArrow commits
+that existed at the old pin, and it conflicts whenever upstream edits its DeArrow again.
+**Rebuild the revert fresh on every sync** (3a), then replay our commits on top of it:
+
 ```sh
 cd PipePipeClient
-git checkout patch
-git rebase --onto <new-client-pin> <old-client-pin> patch
+OLD_BASE=$(git log --format=%H -1 --grep='^revert(dearrow)' patch)   # old revert = old base
+git rebase --onto <new-revert-commit> "$OLD_BASE" patch
 ```
+
+`OLD_BASE` drops the old revert from the replay range. If it comes back empty, the branch
+predates v5.5.0: use `<old-client-pin>` instead. Check
+`git log --oneline <new-revert-commit>..patch` shows our N commits and nothing else.
 
 Resolve conflicts with these rules:
 
@@ -174,24 +191,119 @@ Resolve conflicts with these rules:
 - **`app/build.gradle`**: take upstream's body wholesale, keep our end-of-file
   blocks, then apply whatever 2b turned up.
 - **`.gitignore`, `gradle.properties`**: take upstream, re-add our lines.
-- **Upstream DeArrow** (since v5.5.0): before replaying our commits, branch off the pin and
-  `git revert --no-commit` every upstream DeArrow commit into one `revert(dearrow)` commit. Check
-  `git log --oneline -i --grep=dearrow <old-pin>..<new-pin>` for new ones, and
-  `git grep -n 'name="dearrow_' -- 'app/src/main/res/values-*'` for translations added by
-  unrelated l10n commits.
+- **A hook site where upstream changed the logic next to our hook**: merge both
+  behaviours, never pick a side. Known hot spots from v5.5.0:
+  - `VideoDetailFragment` "already drawn" guard: upstream added
+    `info.getUrl().equals(tabsBuiltForUrl)`; ours compares `renderedInfoUrl` (the title
+    view is unreliable once DeArrow rewrites it). Keep **both**, ANDed.
+  - `LocalItemListAdapter.filter`: upstream added playlist-name matching
+    (`PlaylistMetadataEntry`, `PlaylistRemoteEntity`); ours routes stream rows through
+    `streamEntityOf` + `DeArrowTitleMatcher`. Playlist rows go through `playlistNameOf`.
+  - `InfoListAdapter.getItemViewType`: upstream reads `shownList()` (in-list filtering),
+    not `infoItemList`. Take upstream's accessor, keep our `COMPOSE_SUPPORTED_TYPES`.
+- **Pure "both added lines" conflicts** (imports, adjacent fields, adjacent calls) are
+  union merges -- HEAD side then ours. Most conflicts in a sync are this kind.
+
+**Auto-merged is not reviewed.** For every hook file upstream touched, diff the result
+against the pin and confirm upstream's new behaviour survived next to our hook (v5.5.0:
+multi-select's `bindSelection` in `StreamItem.kt`, `shownList()` in the adapters):
+
+```sh
+git diff <new-revert-commit> HEAD -- <hook-file>
+```
 
 Then confirm nothing was dropped:
 
 ```sh
-git log --oneline <new-client-pin>..HEAD          # expect our N fork commits, no more
+git log --oneline <new-revert-commit>..HEAD       # expect our N fork commits, no more
 git grep -l "DeArrow" -- app/src/main | wc -l     # compare against pre-rebase count
 git diff <our-old-tip> HEAD -- app/src/main/java/org/schabi/newpipe/util/dearrow/
 ```
 
-The last one should be empty or trivially small -- the DeArrow package is ours
-alone, so upstream churn must not have altered it.
+The last one should be empty -- the package is ours alone. The `DeArrow` file count
+can rise for a harmless reason: upstream's `update_log` changelog strings mention
+DeArrow in every locale. Check what any extra files are rather than trusting the count.
 
-### 3a. Sync EVERY other submodule to upstream's new pins
+### 3a. Remove upstream's DeArrow (one `revert(dearrow)` commit)
+
+**Decision (2026-10-22): keep ours, drop theirs.** Upstream's (Kotlin + coroutines) has
+no Compose-UI, player or queue coverage, blanks thumbnails to a placeholder while
+loading, caches in memory only, and does not limit concurrent requests to the API. It also
+**cannot coexist** with ours: it defines the same classes
+(`util/dearrow/DeArrowBranding`, `util/dearrow/DeArrowSettings`,
+`settings/DeArrowSettingsFragment`) and the same preference and string names. The
+shared pref keys are deliberate and must stay identical -- `dearrow_enable`,
+`dearrow_replace_titles`, `dearrow_replace_thumbnails`, `dearrow_home_page`,
+`dearrow_clear_cache` -- so a user moving between the builds keeps their settings.
+Re-read upstream's DeArrow each sync for ideas worth porting, but do not merge it.
+
+**1. Find every upstream DeArrow commit up to the new pin.** Their code is all Kotlin;
+our `util/dearrow/` is all Java, so a `*.kt` pathspec selects theirs alone:
+
+```sh
+git log --oneline <new-client-pin> -- \
+  'app/src/main/java/org/schabi/newpipe/util/dearrow/*.kt' \
+  app/src/main/java/org/schabi/newpipe/settings/DeArrowSettingsFragment.kt \
+  app/src/main/res/xml/dearrow_settings.xml app/src/main/res/values/dearrow_ids.xml
+git log --oneline -i --grep=dearrow <old-client-pin>..<new-client-pin>   # mixed commits
+```
+
+At v5.5.0 the first command lists `2a7aa49bf` (the feature) and `7fbda5ef7` (a fix).
+Keep both checks: the path search misses a hook edit buried in an unrelated commit,
+and the message search misses a commit whose message does not say "DeArrow".
+
+**2. Classify each commit.** *DeArrow-only* -> revert it whole. *Mixed* (DeArrow lines
+inside unrelated work) -> never revert it; strip the DeArrow parts by hand. v5.5.0 had
+two mixed ones: `24db7c535` (Swedish l10n, added `dearrow_*` strings) and an upstream
+fix that rewrote the `DeArrowBinder.isShowingTitle` line in `VideoDetailFragment`.
+
+**3. Build the revert on the new pin**, newest first:
+
+```sh
+git checkout -b sync-<V> <new-client-pin>
+git revert --no-commit <newest-dearrow-only> ... <oldest-dearrow-only>
+```
+
+Resolve with these rules:
+- **Resources** (`values/strings.xml`, `settings_keys.xml`, every `values-*/strings.xml`):
+  keep upstream's side and delete every `name="dearrow_*"` line and the `<!-- DeArrow -->`
+  comment. The conflicts are big but mechanical: their DeArrow block sits next to later
+  upstream strings, and git cannot tell them apart.
+- **Hook sites**: restore upstream's pre-DeArrow code (e.g. the plain
+  `PicassoHelper.loadScaledDownThumbnail(...)` calls), and keep any later non-DeArrow
+  logic on the same lines (the `tabsBuiltForUrl` guard).
+- **`app/build.gradle`**: `git checkout <new-client-pin> -- app/build.gradle`. Upstream
+  added `kotlinx-coroutines-android` for its DeArrow, but `ImageViewerActivity.kt` uses it
+  too, and keeping the file byte-identical to upstream keeps the additive-block invariant.
+  Re-check on each sync that something else still uses coroutines.
+
+Then strip what the mixed commits left (`sed -i '/name="dearrow_/d'` on the affected
+locale), commit, and clear any sequencer state left over (see Gotchas):
+
+```sh
+git commit -m "revert(dearrow): drop upstream's DeArrow in favour of the fork's" -m "<why + list>"
+git revert --quit
+```
+
+**4. Prove the revert is clean** before replaying anything onto it:
+
+```sh
+# upstream DeArrow symbols gone -- must print nothing
+git grep -nE '\bDeArrow(Binder|Row|Repository|Images|Config|Text|Api|VideoId)\b' -- app/src
+# no orphan translations -- must print nothing
+git grep -n 'name="dearrow_' -- 'app/src/main/res/values-*'
+# the only ADDED lines are upstream's own pre-DeArrow code coming back
+git diff <new-client-pin> HEAD | grep '^+[^+]'
+```
+
+At v5.5.0 the last command printed 17 lines, all restored `PicassoHelper` thumbnail
+loads plus the rewritten detail-page guard. Anything else means a resolution took the
+wrong side.
+
+`@string/dearrow` (the settings title) is ours too, defined in `values/strings.xml`, so
+it still resolves after upstream's `donottranslate.xml` copy is reverted.
+
+### 3b. Sync EVERY other submodule to upstream's new pins
 
 **Do not skip this, and do not assume the client is the only submodule that
 moved.** Upstream's release tag records a pin for *every* submodule, and they
@@ -258,7 +370,7 @@ git -C <path> log --oneline -1 <pin>
 Both commands run from the **meta-repo root**:
 
 ```sh
-cd ~/Projects/PipePipe
+cd <meta-repo-root>
 nix run .#debug                       # single universal debug APK
 nix develop -c bash -c 'cd PipePipeClient \
   && ./gradlew :app:testDebugUnitTest --tests "org.schabi.newpipe.util.dearrow.*"'
@@ -316,17 +428,25 @@ git diff <our-old-tip> HEAD -- app/src/main/java/org/schabi/newpipe/util/dearrow
                                app/src/test/java/org/schabi/newpipe/util/dearrow/
 # 2. every bind/dispose call still exists (note the lowercase field name --
 #    grepping "DeArrow" alone misses `deArrowController.apply(...)`)
-grep -rn "deArrowController\.\|deArrowMatcher\|DeArrowPrefetcher\.prefetch" app/src/main/java
+#    The count must equal the pre-rebase tip's (25 at v5.5.0):
+grep -rn "deArrowController\.\|deArrowMatcher\|DeArrowPrefetcher\.prefetch" app/src/main/java | wc -l
+git grep -n "deArrowController\.\|deArrowMatcher\|DeArrowPrefetcher\.prefetch" \
+  backup/pre-rebase-<V> -- app/src/main/java | wc -l
 # 3. upstream must not have touched our badge-carrying layouts; all must still
 #    declare dearrow_badge
-comm -12 <(git diff --name-only <new-pin>..HEAD -- 'app/src/main/res/layout*' | sort) \
+comm -12 <(git diff --name-only <new-revert-commit>..HEAD -- 'app/src/main/res/layout*' | sort) \
          <(git diff --name-only <old-pin>..<new-pin> -- 'app/src/main/res/layout*' | sort)
 grep -rln "dearrow_badge" app/src/main/res/layout*      # expect 6
 # 4. the settings screen is still linked from its parent
 grep -rn "dearrow" app/src/main/res/xml/main_settings.xml
 # 5. no new upstream surface DeArrow would miss
 git diff --diff-filter=A --name-only <old-pin>..<new-pin> -- app/src/main/java | grep -iE 'holder|adapter'
+# 6. no upstream DeArrow crept back in through a mixed commit (must print nothing)
+git grep -nE '\bDeArrow(Binder|Row|Repository|Images|Config|Text|Api|VideoId)\b' -- app/src
 ```
+
+Check 5 flags any new holder or adapter. Decide whether it shows videos before
+hooking it: v5.5.0's `ChatAdapter.kt` is live chat, so there was nothing to hook.
 
 For each `apply()` call, open the enclosing method and confirm upstream still
 calls it. The ones that matter: `VideoDetailFragment.handleResult`,
@@ -352,9 +472,28 @@ files and `fastlane/metadata/.../changelogs/*.txt`, plus the gitlinks). A litera
 rebase works when our history is already clean:
 
 ```sh
-cd ~/Projects/PipePipe
-git rebase --onto main <old-meta-base> patch
+cd <meta-repo-root>
+git -c core.commitGraph=false -c submodule.recurse=false rebase --onto main <old-meta-base> patch
 ```
+
+`<old-meta-base>` is the upstream `main` commit our `patch` sat on (the previous
+sync's target, e.g. `7349b0f` for v5.4.0), not the old tip.
+
+Every commit of ours that bumped the client gitlink stops with
+`CONFLICT (submodule): Merge conflict in PipePipeClient`. That is noise: resolve each
+one by staging the client's **new** rebased HEAD. Intermediate commits then all point at
+the final tip, which is fine. Stop if anything other than the gitlink conflicts:
+
+```sh
+while git status --porcelain=v1 | grep -qE '^(UU|AA|DU|UD) '; do
+  git status --porcelain=v1 | grep -E '^(UU|AA|DU|UD) ' | grep -v PipePipeClient && break
+  git add PipePipeClient
+  GIT_EDITOR=true git -c core.commitGraph=false -c submodule.recurse=false rebase --continue
+done
+```
+
+At v5.5.0 this was 14 commits, gitlink-only conflicts, and both byte-faithfulness diffs
+below came back empty.
 
 If our history carries throwaway churn (gitlink bumps, add-then-delete pairs)
 the literal rebase stops on conflicts that are pure noise. In that case
@@ -414,12 +553,21 @@ diff those by hand.
 
 Client first, then meta (the invariant from section 0). A rebase rewrites
 history, so both need `--force-with-lease`. **The agent cannot force-push --
-the user runs these:**
+the user runs these** (see Gotchas). Push the backup tags first (end of this file),
+then hand the user these lines with the old remote tips filled in. Use the explicit
+`=patch:<sha>` lease, not the bare form: the bare form trusts the local
+remote-tracking ref, so a fetch run after the rebase would let it clobber a push you
+have never seen.
 
 ```sh
-git -C PipePipeClient push --force-with-lease origin patch
-git push --force-with-lease origin patch
+git -C PipePipeClient ls-remote origin refs/heads/patch   # old client tip -> <old-client-sha>
+git ls-remote origin refs/heads/patch                     # old meta tip   -> <old-meta-sha>
+! git -C PipePipeClient push --force-with-lease=patch:<old-client-sha> origin patch
+! git push --force-with-lease=patch:<old-meta-sha> origin patch
 ```
+
+When the user says done, verify that both remote tips equal the local ones
+(`ls-remote` again) before triggering the release.
 
 Then trigger the release (`workflow_dispatch` on `patch`):
 
@@ -431,7 +579,24 @@ gh run watch
 The workflow computes `versionName = <upstream version>-pipepiped.<run_number>`
 and `versionCode = <upstream base> + run_number`, builds one universal APK per
 variant with `-PforkAbiFilter=universal -PforkMinify=false`, and publishes a
-GitHub Release tagged `pipepiped-v<versionName>`.
+GitHub Release tagged `pipepiped-v<versionName>`. The APK's own versionCode is
+100 x that (v5.5.0: run #19 -> `1110 + 19 = 1129` -> APK `112900`).
+
+**There is no draft mode**: the release is public the moment the job ends, with an
+auto-generated body (a commit list, which after a rebase is mostly rewritten history).
+Write the curated notes beforehand -- what upstream's release brings, what the fork
+changed, anything a user must know (e.g. DeArrow defaults, settings carry-over) -- and
+prepend them afterwards, keeping the generated body below a `---`:
+
+```sh
+gh release view <tag> --json body --jq .body > auto-body.md
+{ cat curated.md; printf '\n---\n\n'; cat auto-body.md; } > final-body.md
+gh release edit <tag> --notes-file final-body.md
+```
+
+Run the long steps in the background and work in parallel. `nix run .#debug`
+(~2 min warm), the test run, and `gh run watch` (~8 min) all leave room for the meta
+rebase, the docs and the release notes.
 
 Confirm before calling it done:
 
@@ -462,35 +627,41 @@ Durable traps, all of them hit at least once:
   `git branch -f`.
 - A `commit --amend` reporting "would make it empty" means that content is
   already folded elsewhere -- drop the commit with `git reset --soft HEAD^`.
-- The `clean_commit_guard` hook **blocks any shell command containing the
-  substring "claude"**. Write commit-message files for `-F` to a path without it,
-  and keep the token out of commit messages.
-- Force-push is blocked for the agent. Hand the user the exact command.
+- The agent cannot force-push, even after the user approves it. Do not look for another
+  route: hand the user the exact commands (section 7). Ordinary pushes (backup tags, the
+  post-release docs commit) work fine.
+- In **zsh**, an unquoted `?` is a glob: `git log -1 --format=%G?` fails with "no matches
+  found". Quote it: `git log -1 '--format=%G? %h %s'` (`G` = good signature).
+- After committing a multi-commit `git revert --no-commit A B`, run `git revert --quit`.
+  It is a no-op when no sequencer state is left, and it clears any that a conflicted
+  revert left behind before the rebase starts.
+- A local checkout of `PipePipeClient` can carry untracked local files (signing material
+  among them). They show as `? PipePipeClient` in the meta status. Never `git add -A`
+  inside the client: stage `app/src/...` paths explicitly.
 - A stale `PipePipeClient/local.properties` `sdk.dir` (a garbage-collected Nix
   store path from an older toolchain) shadows `ANDROID_HOME` and fails the build
   with "Directory does not exist". `flake.nix` now rewrites `sdk.dir` on
   mismatch.
 - The keystore is **never** committed (public repo). CI decodes it from the
   `KEYSTORE_*` secrets; local release builds use a gitignored auto-generated
-  keystore. Backups live at `~/.pipepipe-fork-keystore/`. PKCS12 requires
+  keystore. The maintainer keeps backups outside the repo. PKCS12 requires
   store password == key password, or signing fails with "final block not
   properly padded".
 - There is **no NDK** in the flake: `:ffmpeg` ships a prebuilt `ffmpeg-kit.aar`
   with native libs for `arm64-v8a` and `x86_64` only -- which is why a single
   universal APK loses nothing versus upstream's per-ABI splits.
-- An `emoji_remover` hook strips emoji from written files, and edits to a file
-  containing pre-existing emoji get flagged. Do not introduce new emoji; do not
-  strip upstream's.
+- Some upstream files contain emoji (e.g. `VideoDetailFragment.java`). Do not
+  introduce new emoji, and do not strip upstream's.
 
 ## Sync history
 
 | Date | From | To | Client drift | Notes |
 |---|---|---|---|---|
 | 2026-07-09 | v5.1.1 | v5.2.3-beta | 169 commits | Major toolchain jump: Gradle 7.5 -> 9.5.1, AGP 7.3 -> 9.2.1, Kotlin 1.7 -> 2.3.21, JDK 11 -> 25, compileSdk 33 -> 37, minSdk 21 -> 23. Adopted upstream's env-var signing, dropped the fork `keystore.properties`. Only hard merge: `NavigationHelper.java`. |
-| 2026-08-08 | v5.2.3-beta | v5.2.5 | 107 commits | No toolchain change. Upstream's `onVariants` versioning refactor silently broke the `-PforkVersion*` override and `release.yml`'s version greps (see 2b, 2c) -- both found by diff triage, not by conflicts. A stale extractor pin then broke the build (see 3a). Released `pipepiped-v5.2.5-pipepiped.13`. |
+| 2026-08-08 | v5.2.3-beta | v5.2.5 | 107 commits | No toolchain change. Upstream's `onVariants` versioning refactor silently broke the `-PforkVersion*` override and `release.yml`'s version greps (see 2b, 2c) -- both found by diff triage, not by conflicts. A stale extractor pin then broke the build (see 3b). Released `pipepiped-v5.2.5-pipepiped.13`. |
 | 2026-09-11 | v5.2.5 | v5.3.1 | 47 commits | No toolchain change; the 2b/2c hooks all survived, so the triage found nothing to fix. Upstream reverted **media3 -> ExoPlayer 2.18.7** with its SABR rewrite, rewriting `Player.java` (+245/-224) -- our 4 anchor lines re-merged cleanly and no fork file references media3. 3 trivial conflicts. The extractor pin moved `aa72c976` -> `c0cd0d61`. Follow the DeArrow hook audit in step 4a: a compile-clean rebase says nothing about a hook stranded off a live path. |
 | 2026-10-08 | v5.3.1 | v5.4.0 | 25 commits | No toolchain change; 2b/2c hooks survived. Upstream split `Player` into controllers and replaced `PlayQueueItem` with `PlayerMediaItem` (see 4a precedent) -- 2 conflicts. Bug hunt caught a stale `onDestroyView` line from an earlier resolution. Extractor `c0cd0d61` -> `c68e10e2`. Verified on the emulator (`nix run .#emulator`). |
-| 2026-10-22 | v5.4.0 | v5.5.0 | 84 commits | No toolchain change; 2b/2c hooks survived (1110 / 5.5.0). **Upstream shipped its own DeArrow** (`2a7aa49bf` + `7fbda5ef7`) with the same class names and pref keys as ours, so the client gets one `revert(dearrow)` commit on top of the pin before our commits replay. That revert also strips upstream's `dearrow_*` translations (incl. the later Swedish ones) but keeps the coroutines dependency (`ImageViewerActivity` uses it). 6 conflicts: detail-page already-drawn guard (keep upstream's `tabsBuiltForUrl` AND our `renderedInfoUrl`), local-list filter (upstream's playlist-name match + our DeArrow matcher), `InfoListAdapter` `shownList()`, imports. Meta: gitlink-only conflicts. Extractor `c68e10e2` -> `1a09d20e`. |
+| 2026-10-22 | v5.4.0 | v5.5.0 | 84 commits | No toolchain change; 2b/2c hooks survived (1110 / 5.5.0). **Upstream shipped its own DeArrow** (`2a7aa49bf` + `7fbda5ef7`) with the same class names and pref keys as ours, so the client gets one `revert(dearrow)` commit on top of the pin before our commits replay. That revert also strips upstream's `dearrow_*` translations (incl. the later Swedish ones) but keeps the coroutines dependency (`ImageViewerActivity` uses it). 6 conflicts: detail-page already-drawn guard (keep upstream's `tabsBuiltForUrl` AND our `renderedInfoUrl`), local-list filter (upstream's playlist-name match + our DeArrow matcher), `InfoListAdapter` `shownList()`, imports. Meta: gitlink-only conflicts. Extractor `c68e10e2` -> `1a09d20e`. Released `pipepiped-v5.5.0-pipepiped.19` (run #19, APK versionCode 112900). |
 
 Push the backup tags to both remotes before force-pushing, not just locally: the
 force-push is what makes the old remote history unreachable, so a tag that exists
