@@ -152,6 +152,11 @@ comm -12 \
 That is the exact set of files both sides touched -- the only possible conflicts.
 Most fork files are new DeArrow files and never conflict.
 
+Since v5.5.0 `<old-client-pin>..<our-tip>` also contains the old `revert(dearrow)`, which
+touches every locale's `strings.xml`, so the list above overstates our surface. For the files
+*our commits* touch, use `<old-revert>..patch` in the first diff instead (v5.6.0: 25 files, all
+hook sites plus `app/build.gradle` and `.gitignore`).
+
 ## 3. Rebase the client fork
 
 Since v5.5.0 upstream ships **its own DeArrow**, so the client is no longer "our
@@ -181,11 +186,12 @@ Resolve conflicts with these rules:
 
 - **DeArrow hook sites** (`InfoListAdapter`, `StreamInfoItemHolder`,
   `StreamMiniInfoItemHolder`, `LocalItemListAdapter`, `StreamItem.kt`,
-  `PlayQueueItemBuilder`, `VideoDetailFragment`, `InfoItemDialog`, `Player`,
+  `PlayQueueItemBuilder`, the detail page (`DetailHeaderBinder`, `VideoDetailFragment.kt`,
+  `DetailActions`, see 4a), `InfoItemDialog`, `Player`,
   `BaseListFragment`, `FeedFragment.kt`, `NavigationHelper`): keep upstream's
   logic, re-apply our call into `DeArrowItemController` / `DeArrowPrefetcher` on
-  top. Never mutate extractor models; never overwrite
-  `VideoDetailFragment.title` (share / notification / history read it).
+  top. Never mutate extractor models; never overwrite the detail page's model title
+  (`vm.title` / `currentInfo.name`: share / notification / history read it).
 - **`strings.xml`, `settings_keys.xml`, `ids.xml`**: take upstream's block, append
   ours. Translations (`values-*/strings.xml`) are upstream-only -- take theirs.
 - **`app/build.gradle`**: take upstream's body wholesale, keep our end-of-file
@@ -193,9 +199,10 @@ Resolve conflicts with these rules:
 - **`.gitignore`, `gradle.properties`**: take upstream, re-add our lines.
 - **A hook site where upstream changed the logic next to our hook**: merge both
   behaviours, never pick a side. Known hot spots from v5.5.0:
-  - `VideoDetailFragment` "already drawn" guard: upstream added
-    `info.getUrl().equals(tabsBuiltForUrl)`; ours compares `renderedInfoUrl` (the title
-    view is unreliable once DeArrow rewrites it). Keep **both**, ANDed.
+  - Detail page "already drawn" guard: since v5.6.0 upstream's own guard compares
+    `header.shownUrl` (model state), so the fork's old `renderedInfoUrl` is gone. If upstream
+    ever goes back to comparing the title view's text, that breaks under DeArrow -- grep for
+    `detailVideoTitleView.text` reads on each sync.
   - `LocalItemListAdapter.filter`: upstream added playlist-name matching
     (`PlaylistMetadataEntry`, `PlaylistRemoteEntity`); ours routes stream rows through
     `streamEntityOf` + `DeArrowTitleMatcher`. Playlist rows go through `playlistNameOf`.
@@ -297,8 +304,13 @@ git diff <new-client-pin> HEAD | grep '^+[^+]'
 ```
 
 At v5.5.0 the last command printed 17 lines, all restored `PicassoHelper` thumbnail
-loads plus the rewritten detail-page guard. Anything else means a resolution took the
-wrong side.
+loads plus the rewritten detail-page guard; at v5.6.0, 16 lines, the thumbnail loads in five
+holders. Anything else means a resolution took the wrong side.
+
+v5.6.0 mixed commits, for reference: `1628ce00f` (the detail-page Kotlin rewrite) carried the
+`DeArrowBinder.bind` call into `DetailHeaderBinder.kt`, and `f8aca8529` (Romanian) added
+`dearrow_*` strings. Swedish (`24db7c535`) needs the `sed` strip on every sync. `rerere` is on
+in this repo, so these resolutions are recorded and may replay automatically next time.
 
 `@string/dearrow` (the settings title) is ours too, defined in `values/strings.xml`, so
 it still resolves after upstream's `donottranslate.xml` copy is reverted.
@@ -350,6 +362,20 @@ kaptDebugKotlin FAILED
 (Real failure from the v5.2.5 sync: client at v5.2.5, extractor still at
 v5.2.3-beta.)
 
+The extractor also defines contracts our own code relies on, so read its diff for the
+downloader and exception types, not only for new symbols. **Precedent (v5.6.0):** extractor
+`b7a167e3` made every `Downloader` method throw `AntiBotException`, and HTTP 429 now arrives as
+a plain `AntiBotException` (`ReCaptchaException`, now its subclass, is only for challenge
+pages). `DeArrowService` caught `ReCaptchaException` to start its 60 s rate-limit hold, so it
+would have stopped seeing 429s at all. The compiler caught it this time only because the new
+type is checked; the fix (catch `AntiBotException`) is folded into the commit that introduced
+the catch.
+
+```sh
+git -C PipePipeExtractor diff <old-pin>..<new-pin> -- \
+  '*/downloader/*.java' '*/exceptions/*.java'
+```
+
 `PipePipe.wiki` has never been initialized and is not part of the build, so it
 needs no checkout -- but its gitlink still has to match upstream's, which it does
 automatically once our branch is based on `main`. Leave it uninitialized.
@@ -390,7 +416,13 @@ count must equal its `@Test` count, or a class silently stopped running.
 ```sh
 cd PipePipeClient/app/build/test-results/testDebugUnitTest
 grep -ho 'tests="[0-9]*"' TEST-org.schabi.newpipe.util.dearrow.*.xml
+stat -c '%y %n' TEST-org.schabi.newpipe.util.dearrow.*.xml   # must be from THIS run
 ```
+
+Check the Gradle exit code and the XML timestamps too: a test-compile failure leaves the
+previous sync's XMLs in place, all green. At v5.6.0 that hid a real failure --
+`ServiceList.SoundCloud` was gone (SoundCloud became a plugin) and two test classes no longer
+compiled. They now use `ServiceList.BiliBili` as the non-YouTube service.
 
 Checkstyle is **not** in `assembleDebug` and **not** a CI gate, and upstream
 itself fails it -- hand-check any new file for the 100-column limit, `final`
@@ -428,7 +460,8 @@ git diff <our-old-tip> HEAD -- app/src/main/java/org/schabi/newpipe/util/dearrow
                                app/src/test/java/org/schabi/newpipe/util/dearrow/
 # 2. every bind/dispose call still exists (note the lowercase field name --
 #    grepping "DeArrow" alone misses `deArrowController.apply(...)`)
-#    The count must equal the pre-rebase tip's (25 at v5.5.0):
+#    The count must equal the pre-rebase tip's (25 at v5.5.0; 26 at v5.6.0, the detail
+#    page disposes in both loading paths):
 grep -rn "deArrowController\.\|deArrowMatcher\|DeArrowPrefetcher\.prefetch" app/src/main/java | wc -l
 git grep -n "deArrowController\.\|deArrowMatcher\|DeArrowPrefetcher\.prefetch" \
   backup/pre-rebase-<V> -- app/src/main/java | wc -l
@@ -449,7 +482,7 @@ Check 5 flags any new holder or adapter. Decide whether it shows videos before
 hooking it: v5.5.0's `ChatAdapter.kt` is live chat, so there was nothing to hook.
 
 For each `apply()` call, open the enclosing method and confirm upstream still
-calls it. The ones that matter: `VideoDetailFragment.handleResult`,
+calls it. The ones that matter: `DetailHeaderBinder.showInfo`,
 `Player`'s metadata/title path, `PlayQueueActivity.onMetadataUpdate`, the four
 item holders' `updateFromItem`, `PlayQueueItemBuilder`, `StreamItem.kt`, and both
 adapters' prefetch + recycle-dispose.
@@ -464,6 +497,22 @@ since Phase 12 -- include them in this audit; the maintainer runs with that UI o
 > (called from `PlayerMetadataController`), disposed from `Player.destroy()`.
 > When a hook's host file is rewritten wholesale, take upstream's file and
 > re-find the view write (`grep titleTextView`) rather than merging hunks.
+
+> **Precedent (v5.6.0).** Upstream deleted `VideoDetailFragment.java` (3096 lines) and
+> rewrote the page in Kotlin: `VideoDetailFragment.kt` wires it, `DetailHeaderBinder` owns the
+> header views, `DetailActions` the clicks, and the thumbnail moved into the shared
+> `video_detail_thumbnail.xml` (also used by `layout-large-land`). Every fork commit that touched
+> the Java file stops on a modify/delete conflict: `git rm` it and port that commit's own hunks
+> into the Kotlin classes, so each commit stays self-contained. Where things live now:
+> - DeArrow: `DetailHeaderBinder` applies in `showInfo()` after `loadImages()`, disposes in
+>   `showLoading()`, `showHeaderPreview()` and `release()`; badge in `video_detail_thumbnail.xml`;
+>   `DetailActions` copies `info.name` (not the view's text) on a title long-press.
+> - Instant header: `VideoDetailFragment.kt` keeps `previewInfoItem` (set by the
+>   `selectAndLoadVideo` / `getInstance` overloads taking a `StreamInfoItem`) and branches in
+>   `showLoading()`; `DetailHeaderBinder.showHeaderPreview()` draws it, `loadImages()` keeps the
+>   preview frame as the placeholder, `showError()` takes the preview down.
+> - `NavigationHelper.openVideoDetailFragment` has a 9-argument core (`forcePlayFullscreen`,
+>   `previewItem`); upstream's two overloads and the fork's `previewItem` one delegate to it.
 
 ## 5. Rebase the meta repo
 
@@ -650,7 +699,7 @@ Durable traps, all of them hit at least once:
 - There is **no NDK** in the flake: `:ffmpeg` ships a prebuilt `ffmpeg-kit.aar`
   with native libs for `arm64-v8a` and `x86_64` only -- which is why a single
   universal APK loses nothing versus upstream's per-ABI splits.
-- Some upstream files contain emoji (e.g. `VideoDetailFragment.java`). Do not
+- Some upstream files contain emoji (e.g. the old `VideoDetailFragment.java`). Do not
   introduce new emoji, and do not strip upstream's.
 
 ## Sync history
@@ -662,6 +711,7 @@ Durable traps, all of them hit at least once:
 | 2026-09-11 | v5.2.5 | v5.3.1 | 47 commits | No toolchain change; the 2b/2c hooks all survived, so the triage found nothing to fix. Upstream reverted **media3 -> ExoPlayer 2.18.7** with its SABR rewrite, rewriting `Player.java` (+245/-224) -- our 4 anchor lines re-merged cleanly and no fork file references media3. 3 trivial conflicts. The extractor pin moved `aa72c976` -> `c0cd0d61`. Follow the DeArrow hook audit in step 4a: a compile-clean rebase says nothing about a hook stranded off a live path. |
 | 2026-10-08 | v5.3.1 | v5.4.0 | 25 commits | No toolchain change; 2b/2c hooks survived. Upstream split `Player` into controllers and replaced `PlayQueueItem` with `PlayerMediaItem` (see 4a precedent) -- 2 conflicts. Bug hunt caught a stale `onDestroyView` line from an earlier resolution. Extractor `c0cd0d61` -> `c68e10e2`. Verified on the emulator (`nix run .#emulator`). |
 | 2026-10-22 | v5.4.0 | v5.5.0 | 84 commits | No toolchain change; 2b/2c hooks survived (1110 / 5.5.0). **Upstream shipped its own DeArrow** (`2a7aa49bf` + `7fbda5ef7`) with the same class names and pref keys as ours, so the client gets one `revert(dearrow)` commit on top of the pin before our commits replay. That revert also strips upstream's `dearrow_*` translations (incl. the later Swedish ones) but keeps the coroutines dependency (`ImageViewerActivity` uses it). 6 conflicts: detail-page already-drawn guard (keep upstream's `tabsBuiltForUrl` AND our `renderedInfoUrl`), local-list filter (upstream's playlist-name match + our DeArrow matcher), `InfoListAdapter` `shownList()`, imports. Meta: gitlink-only conflicts. Extractor `c68e10e2` -> `1a09d20e`. Released `pipepiped-v5.5.0-pipepiped.19` (run #19, APK versionCode 112900). |
+| 2026-11-23 | v5.5.0 | v5.6.0 | 87 commits | No toolchain change (upstream `minSdk` 23 -> 24 only); 2b/2c hooks survived (1111 / 5.6.0). **Upstream rewrote the detail page in Kotlin** (`1628ce00f`, see 4a precedent): the fork's detail-page DeArrow and instant-header hunks were ported per commit into `DetailHeaderBinder` / `VideoDetailFragment.kt` / `DetailActions`, `b6e43a767` dropped as empty. Revert: 3 DeArrow-only commits (`31e164463` new) plus hand-strips in `DetailHeaderBinder.kt`, `values-ro`, `values-sv`. Extractor `1a09d20e` -> `e9818f8ef` changed the 429 exception contract (see 3b). Upstream removed Kodi (`KoreUtils`) for PipePipe-to-PipePipe casting; `NavigationHelper` gained a `forcePlayFullscreen` overload. Meta: gitlink-only conflicts. |
 
 Push the backup tags to both remotes before force-pushing, not just locally: the
 force-push is what makes the old remote history unreachable, so a tag that exists

@@ -44,8 +44,9 @@ upstream's, unchanged.
   UI*): with it on, upstream routes the channel page, search, related videos, remote playlists,
   watch history and local playlists through Compose item rows, which the fork now decorates too --
   titles, thumbnails and the toggle badge all behave as they do in the classic UI.
-- **Replacement thumbnails** on lists and video detail. The original is always kept until a DeArrow
-  frame actually loads, so a not-yet-generated frame never leaves a blank thumbnail.
+- **Replacement thumbnails** on lists and video detail (tablet landscape layout included). The
+  original is always kept until a DeArrow frame actually loads, so a not-yet-generated frame never
+  leaves a blank thumbnail.
 - **Interactive toggle badge** — a star on each thumbnail flips that row between the DeArrow and the
   original title + thumbnail; replaced titles can also be marked with a small icon.
 - **Settings -> DeArrow**: enable DeArrow, replace titles, auto-format titles, mark replaced titles,
@@ -97,7 +98,7 @@ upstream's, unchanged.
 ### Project layout
 - Fork-only submodules: the app (`PipePipeClient`) tracks this fork's `patch` branch; the extractor
   (`PipePipeExtractor`) stays pinned to upstream. Only what we change is forked.
-- Currently tracking upstream **v5.4.0**. Keeping current is a documented procedure --
+- Currently tracking upstream **v5.6.0**. Keeping current is a documented procedure --
   see [`docs/upstream-sync-runbook.md`](docs/upstream-sync-runbook.md).
 
 ## Building & installing (PipePipeD fork)
